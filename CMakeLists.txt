@@ -8,6 +8,13 @@ project(gh3 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# NRO do Switch: build cruzado no container (docker/switch), só sobre o generated/ que o host já gerou.
+option(GH3_SWITCH "NRO do Switch (devkitA64 + libnx; ver cmake/switch.cmake)" OFF)
+if(GH3_SWITCH)
+    include(cmake/switch.cmake)
+    return()
+endif()
+
 include(generated/rexglue.cmake)
 
 # Renderer nativo (GPL-3.0, do project8-sw, que o adaptou do nfsmw-nx; ver NOTICE). Escolhido em tempo

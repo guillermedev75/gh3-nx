@@ -13,6 +13,11 @@ src/native/ e src/guest_pacing_stats.h
   cvars), categoria de cvar "THPS" → "GH3", e uma linha de log por quadro
   apresentado ("XELOG_GPU PRESENT native") para o tools/boot_test.py.
 
+cmake/switch.cmake e cmake/switch-rexglue-gcc.cmake
+  Do project8-sw (commit 3393f26): src/game/cmake/switch.cmake e
+  tools/switch/switch-rexglue-gcc.cmake. GPL-3.0-or-later. O toolchain está sem
+  mudanças; o switch.cmake troca thps_p8 → gh3 e as fontes do jogo pelas do GH3.
+
 O texto da GPL-3.0 está em LICENSE.
 
 Este repositório não distribui imagem de disco, executável original nem arquivos

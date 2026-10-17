@@ -26,7 +26,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [x] T4: toolchain Switch (Docker devkitA64) e driver NVK patcheado
   aceite: test -f out/driver-sdk/lib/libvulkan.a && nm out/driver-sdk/lib/libvulkan.a 2>/dev/null | grep -q vkCreateInstance
   detalhe: plano detalhado, Task 4
-- [ ] T5: NRO do GH3 validado
+- [x] T5: NRO do GH3 validado
   aceite: .venv/bin/python -m pytest -q tests/test_check_nro.py && python3 tools/check_nro.py build/switch/gh3.nro
   detalhe: plano detalhado, Task 5
 - [ ] T6: trava do default.xex e pacote do SD sem conteúdo do jogo

@@ -1,0 +1,59 @@
+# NRO do Switch (adaptado de project8-sw/src/game/cmake/switch.cmake, commit 3393f26).
+# Incluído pelo CMakeLists.txt com -DGH3_SWITCH=ON, dentro do container gh3-switch-clang
+# (devkitA64 + libnx), com o toolchain cmake/switch-rexglue-gcc.cmake.
+# O codegen não roda aqui: o rexglue é ferramenta do host (tools/build_host_sdk.sh) e o
+# compilador cruzado só consome o generated/default/ que ele deixou.
+set(REXSDK_DIR "" CACHE PATH "Árvore do SDK ReXGlue patcheado (tools/setup_sdk.sh)")
+if(NOT EXISTS "${REXSDK_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR "Defina REXSDK_DIR com a árvore do SDK patcheado (tools/setup_sdk.sh)")
+endif()
+set(GH3_GENERATED_DIR "${CMAKE_SOURCE_DIR}/generated/default" CACHE PATH
+    "Código traduzido localmente do default.xex do próprio disco")
+if(NOT EXISTS "${GH3_GENERATED_DIR}/sources.cmake" OR
+   NOT EXISTS "${GH3_GENERATED_DIR}/gh3_pch.h" OR
+   NOT EXISTS "${GH3_GENERATED_DIR}/gh3_init.h")
+    message(FATAL_ERROR
+        "generated/default/ incompleto: rode o codegen no host (tools/build_host_sdk.sh) "
+        "com o default.xex do próprio disco antes do build do Switch.")
+endif()
+add_subdirectory("${REXSDK_DIR}" rexglue-sdk)
+include("${GH3_GENERATED_DIR}/sources.cmake")
+if(NOT GENERATED_SOURCES)
+    message(FATAL_ERROR "generated/default/sources.cmake não lista nenhuma unidade de tradução")
+endif()
+add_library(gh3_recomp OBJECT ${GENERATED_SOURCES})
+target_include_directories(gh3_recomp PRIVATE
+    "${CMAKE_SOURCE_DIR}"
+    "${CMAKE_SOURCE_DIR}/src"
+    "${GH3_GENERATED_DIR}")
+target_link_libraries(gh3_recomp PRIVATE rex::runtime)
+target_precompile_headers(gh3_recomp PRIVATE "${GH3_GENERATED_DIR}/gh3_pch.h")
+# Do project8-sw: o GCC juntava pares de cópias de 64 bits do contexto do guest num load/store de
+# registrador q de 128 bits, e uma page fault no meio voltava com o q31 zerado no Horizon (crash
+# real no THPS). Registradores gerais sobrevivem a todo caminho de retomada; os vetoriais não.
+target_compile_options(gh3_recomp PRIVATE -fno-tree-slp-vectorize -fno-tree-vectorize)
+
+# No Switch o plugin xenos já entra inteiro no executável (rexglue_switch_configure_target, com
+# --whole-archive), então o renderer nativo e a GPU emulada linkam direto nele; não existe a
+# cópia OBJECT gh3_gpu_xenos do build do Mac.
+add_executable(gh3 src/main.cpp
+    src/native/gh3_native_system.cpp
+    src/native/native_renderer.cpp
+    src/native/native_textures.cpp
+    src/native/native_geometry_shaders.cpp)
+target_include_directories(gh3 PRIVATE
+    "${CMAKE_SOURCE_DIR}"
+    "${CMAKE_SOURCE_DIR}/src"
+    "${GH3_GENERATED_DIR}"
+    "${REXSDK_DIR}/thirdparty/imgui"
+    # O SPIR-V pré-compilado do SDK (shader de gamma do swap).
+    "${REXSDK_DIR}/src/graphics"
+    # O builder de SPIR-V do glslang, que os headers do tradutor incluem.
+    "${REXSDK_DIR}/thirdparty/glslang")
+target_compile_definitions(gh3 PRIVATE GH3_NATIVE_RENDERER=1)
+target_link_libraries(gh3 PRIVATE gh3_recomp)
+rexglue_switch_configure_target(gh3 GPU_PLUGINS xenos)
+set(GH3_NRO_NAME "gh3-nx" CACHE STRING "Título mostrado pelo Homebrew Menu")
+set(GH3_NRO_VERSION "0.1.0" CACHE STRING "Versão mostrada pelo Homebrew Menu")
+rexglue_switch_add_nro(gh3 NAME "${GH3_NRO_NAME}" AUTHOR "Guillerme Manhaes"
+    VERSION "${GH3_NRO_VERSION}" ICON "${CMAKE_SOURCE_DIR}/switch/icon.jpg")

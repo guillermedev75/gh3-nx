@@ -36,3 +36,10 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - decisões: `libvulkan.a` = MRI do `aarch64-none-elf-ar` juntando as 19 libs que o `build-switch-p8.sh` produz, menos `libnak_rs.a` (separada, como manda o building.md).
 - pendente: `vkCreateInstance`/`nvk_CreateInstance` aparecem 2× (o `libvulkan.a` do nouveau e o `libnvk.a` parecem ter os mesmos objetos). Conferir no link do T5; se der símbolo duplicado, tirar `libnvk.a` da lista. Rust nightly da imagem não é fixado (hoje: 1.101.0-nightly 2026-10-16), então builds futuros podem divergir.
 - 2026-10-17 06:47 T4 ✅ aceita (iter 5)
+
+### T5 — tentativa 1
+- feito: `tools/check_nro.py` (magia `NRO0` em 0x10, tamanho em 0x18 ≤ arquivo, depois dele só `ASET`) + `tests/test_check_nro.py` (2 do plano + truncado, asset section, lixo no fim, arquivo ausente; vermelhos antes). `cmake/switch.cmake` + `cmake/switch-rexglue-gcc.cmake` (do project8-sw, no `NOTICE`), `option(GH3_SWITCH)` no `CMakeLists.txt`, `switch/icon.jpg` (256×256, formas geradas com PIL, sem arte do jogo). NRO real: `build/switch/gh3.nro` 56,8 MiB, 647 passos em 512 s (medido). Aceite verde; suíte 40 passed. Playbook §1.
+- decisões: com `GH3_SWITCH` o `CMakeLists.txt` faz `return()` antes do `generated/rexglue.cmake` (codegen é do host; o container só compila o `generated/default/` existente). No Switch o nativo entra sempre (`GH3_NATIVE_RENDERER=1`) e linka direto no `rexgpu-xenos` whole-archive do SDK; sem a cópia OBJECT do Mac. `-fno-tree-*vectorize` mantido do project8-sw (bug do q31 no Horizon).
+- decisões: `check_nro.py` com `from __future__ import annotations` porque o aceite usa o `python3` do sistema (3.9). Build no Docker com `-j 6` (Docker tem 7,7 GiB; o project8-sw fala em 16 GB). Nenhuma dependência nova.
+- pendente: o `vkCreateInstance` duplicado do T4 não quebrou o link (`--allow-multiple-definition`); só o console confirma. NRO não testado em hardware (H2/H3). Não há script `tools/build_nro.sh`; o comando docker está no playbook.
+- 2026-10-17 09:06 T5 ✅ aceita (iter 1)
