@@ -58,3 +58,4 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - pendente: conferência visual do HUD/partículas no Mac (só log); NRO não recompilado (o ramo com GS não mudou, mas o header novo não passou pelo GCC do devkitA64). Motivo 7 (sem render target, ~25 mil/10 s) e 13 continuam — fora do T7.
 - 2026-10-17 09:19 T7 ✅ aceita (iter 3)
 - 2026-10-17 09:48 T8 ❌ tentativa 1: padrão proibido adicionado em teste: xit(
+- 2026-10-17 09:53 T8 ❌ tentativa 2: oráculo vermelho (.harness/gh3-marco-c/logs/oracle-1.log):
