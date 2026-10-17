@@ -8,7 +8,7 @@
   {"action":"delay","value":4000},
   {"action":"mark","value":"title"},
   {"action":"button","value":"start"},
-  {"action":"delay","value":10000},
+  {"action":"delay","value":14000},
   {"action":"mark","value":"main_menu"},
   {"action":"button","value":"down"},
   {"action":"delay","value":1000},
@@ -23,5 +23,7 @@
   {"action":"mark","value":"setlist"},
   {"action":"button","value":"a"},
   {"action":"delay","value":5000},
-  {"action":"mark","value":"song"}
+  {"action":"mark","value":"song"},
+  {"action":"delay","value":16000},
+  {"action":"mark","value":"gameplay"}
 ]

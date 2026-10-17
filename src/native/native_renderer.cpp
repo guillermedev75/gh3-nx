@@ -58,6 +58,7 @@ extern "C" {
 #endif
 
 #include "native_geometry_shaders.h"
+#include "native_edram_samples.h"
 #include "native_primitive_expand.h"
 #include "native_hash.h"
 #include "native_textures.h"
@@ -75,6 +76,10 @@ REXCVAR_DEFINE_BOOL(gh3_native_record_thread, false, "GH3",
 REXCVAR_DEFINE_BOOL(gh3_native_msaa, true, "GH3",
                     "Render with the multisampling the game asks for; off draws every target "
                     "with one sample, which costs the GPU much less memory bandwidth");
+REXCVAR_DEFINE_BOOL(gh3_native_msaa_as_samples, true, "GH3",
+                    "Draw multisampled surfaces as their EDRAM samples, into the single-sampled "
+                    "target that shares that EDRAM (4x at pitch P = 1x at pitch 2P), as the game "
+                    "clears its targets; overrides gh3_native_msaa");
 REXCVAR_DEFINE_BOOL(gh3_native_async_pipelines, true, "GH3",
                     "Native renderer: compile new pipelines on a worker thread and skip the "
                     "draws that need them until they are ready, instead of stalling the frame");
@@ -366,6 +371,9 @@ struct Renderer::Impl {
   // The targets are sized in guest pixels whatever the sample count, so one
   // sample changes only the images, the pipelines and the resolves.
   bool multisample = true;
+  // Multisampled surfaces as their samples (gh3_native_msaa_as_samples,
+  // native_edram_samples.h): wins over multisample.
+  bool msaa_as_samples = true;
   // D24_UNORM_S8_UINT for the game's kD24S8 buffers (gh3_native_depth24).
   bool depth24 = false;
   // The float24 ones (here only shadow maps) become D32_SFLOAT without
@@ -444,8 +452,10 @@ struct Renderer::Impl {
     ~TextureTimer() { total += NowNs() - start; }
   };
   void ProfileReport();
-  uint32_t HostMsaa(xenos::MsaaSamples guest) const {
-    return multisample ? uint32_t(guest) : 0;
+  // The host target a guest surface lands on (native_edram_samples.h).
+  edram::Surface SurfaceFor(reg::RB_SURFACE_INFO info) const {
+    return edram::HostSurface(info.surface_pitch, uint32_t(info.msaa_samples), msaa_as_samples,
+                              multisample);
   }
   bool null_images_initialized = false;
 
@@ -761,6 +771,7 @@ struct Renderer::Impl {
   // Not in ReXGlue's device function table.
   PFN_vkCmdClearDepthStencilImage vkCmdClearDepthStencilImage = nullptr;
   PFN_vkCmdResolveImage vkCmdResolveImage = nullptr;
+  PFN_vkCmdBlitImage vkCmdBlitImage = nullptr;
   PFN_vkDeviceWaitIdle vkDeviceWaitIdle = nullptr;
   Submission& current() { return submissions[submission_number % kSubmissionSlots]; }
   // Waits for queued draws first: the recording thread and this one never
@@ -1349,8 +1360,9 @@ bool Renderer::Impl::Initialize() {
       get_proc(vk, "vkCmdClearDepthStencilImage"));
   vkCmdResolveImage =
       reinterpret_cast<PFN_vkCmdResolveImage>(get_proc(vk, "vkCmdResolveImage"));
+  vkCmdBlitImage = reinterpret_cast<PFN_vkCmdBlitImage>(get_proc(vk, "vkCmdBlitImage"));
   vkDeviceWaitIdle = reinterpret_cast<PFN_vkDeviceWaitIdle>(get_proc(vk, "vkDeviceWaitIdle"));
-  if (!vkCmdClearDepthStencilImage || !vkCmdResolveImage || !vkDeviceWaitIdle) {
+  if (!vkCmdClearDepthStencilImage || !vkCmdResolveImage || !vkCmdBlitImage || !vkDeviceWaitIdle) {
     REXLOG_ERROR("[native] Missing Vulkan device functions");
     return false;
   }
@@ -1361,6 +1373,7 @@ bool Renderer::Impl::Initialize() {
   }
   specialize_signs = REXCVAR_GET(gpu_specialize_texture_signs);
   multisample = REXCVAR_GET(gh3_native_msaa);
+  msaa_as_samples = REXCVAR_GET(gh3_native_msaa_as_samples);
   ubo_alignment = std::max<VkDeviceSize>(properties.minUniformBufferOffsetAlignment, 16);
 
   translator = std::make_unique<SpirvShaderTranslator>(SpirvShaderTranslator::Features(device),
@@ -2640,8 +2653,7 @@ void Renderer::Impl::UpdateSystemConstants(bool primitive_polygonal,
   if (pa_cl_vte_cntl.vtx_w0_fmt) flags |= SpirvShaderTranslator::kSysFlag_WNotReciprocal;
   if (primitive_polygonal) flags |= SpirvShaderTranslator::kSysFlag_PrimitivePolygonal;
   if (draw_util::IsPrimitiveLine(r)) flags |= SpirvShaderTranslator::kSysFlag_PrimitiveLine;
-  flags |= HostMsaa(rb_surface_info.msaa_samples)
-           << SpirvShaderTranslator::kSysFlag_MsaaSamples_Shift;
+  flags |= SurfaceFor(rb_surface_info).msaa << SpirvShaderTranslator::kSysFlag_MsaaSamples_Shift;
   if (rb_depth_info.depth_format == xenos::DepthRenderTargetFormat::kD24FS8) {
     flags |= SpirvShaderTranslator::kSysFlag_DepthFloat24;
   }
@@ -2916,9 +2928,14 @@ bool Renderer::Impl::BuildDrawSetup(uint32_t initiator_value) {
   bool depth_used = depth_control.z_enable || depth_control.stencil_enable;
   // The guest's sample count sizes the EDRAM below; the host's keys the targets.
   uint32_t guest_msaa = uint32_t(surface_info.msaa_samples);
-  uint32_t msaa = HostMsaa(surface_info.msaa_samples);
+  const edram::Surface surface = SurfaceFor(surface_info);
+  uint32_t msaa = surface.msaa;
   draw_util::GetScissor(r, st.scissor);
-  draw_util::GetHostViewportInfo(r, 1, 1, false, properties.maxViewportDimensions[0],
+  st.scissor.offset[0] *= surface.scale_x;
+  st.scissor.extent[0] *= surface.scale_x;
+  st.scissor.offset[1] *= surface.scale_y;
+  st.scissor.extent[1] *= surface.scale_y;
+  draw_util::GetHostViewportInfo(r, surface.scale_x, surface.scale_y, false, properties.maxViewportDimensions[0],
                                  properties.maxViewportDimensions[1], true, depth_control, false,
                                  true, ps && ps->writes_depth(), st.viewport);
   // Rows the draw can touch: the viewport, cut by the scissor. The scissor
@@ -2934,14 +2951,14 @@ bool Renderer::Impl::BuildDrawSetup(uint32_t initiator_value) {
     auto color_info = r.Get<reg::RB_COLOR_INFO>(reg::RB_COLOR_INFO::rt_register_indices[i]);
     RenderTargetKey key = {};
     key.base_tiles = color_info.color_base;
-    key.pitch = surface_info.surface_pitch;
+    key.pitch = surface.pitch;
     key.format = uint32_t(color_info.color_format);
     key.msaa = msaa;
     // The EDRAM below the base limits how tall the target can be.
     uint32_t pitch_tiles = (surface_info.surface_pitch * (guest_msaa >= 2 ? 2 : 1) + 79) / 80 *
                            (IsColorFormat64bpp(color_info.color_format) ? 2 : 1);
     uint32_t rows = pitch_tiles ? (2048 - std::min(key.base_tiles, 2047u)) / pitch_tiles *
-                                      (guest_msaa >= 1 ? 8 : 16)
+                                      (guest_msaa >= 1 ? 8 : 16) * surface.scale_y
                                 : 2048;
     targets.color[i] = GetRenderTarget(key, std::min(needed_height, rows));
   }
@@ -2949,15 +2966,28 @@ bool Renderer::Impl::BuildDrawSetup(uint32_t initiator_value) {
     auto depth_info = r.Get<reg::RB_DEPTH_INFO>();
     RenderTargetKey key = {};
     key.base_tiles = depth_info.depth_base;
-    key.pitch = surface_info.surface_pitch;
+    key.pitch = surface.pitch;
     key.format = uint32_t(depth_info.depth_format);
     key.msaa = msaa;
     key.is_depth = 1;
     uint32_t pitch_tiles = (surface_info.surface_pitch * (guest_msaa >= 2 ? 2 : 1) + 79) / 80;
     uint32_t rows = pitch_tiles ? (2048 - std::min(key.base_tiles, 2047u)) / pitch_tiles *
-                                      (guest_msaa >= 1 ? 8 : 16)
+                                      (guest_msaa >= 1 ? 8 : 16) * surface.scale_y
                                 : 2048;
     targets.depth = GetRenderTarget(key, std::min(needed_height, rows));
+    {  // T9 PROBE (temporário)
+      static std::unordered_set<uint64_t> seen;
+      uint64_t k = uint64_t(depth_control.value) ^ (uint64_t(key.base_tiles) << 32) ^
+                   (uint64_t(key.pitch) << 44) ^ (uint64_t(key.format) << 60);
+      if (seen.insert(k).second && seen.size() < 300) {
+        REXLOG_INFO("[T9] draw depth base {} pitch {} fmt {} z_en {} z_write {} zfunc {} stencil {} "
+                    "vp z {}..{} colormask {:04X}",
+                    uint32_t(key.base_tiles), uint32_t(key.pitch), uint32_t(key.format),
+                    uint32_t(depth_control.z_enable), uint32_t(depth_control.z_write_enable),
+                    uint32_t(depth_control.zfunc), uint32_t(depth_control.stencil_enable),
+                    st.viewport.z_min, st.viewport.z_max, color_mask);
+      }
+    }
   }
   // Creating a render target above bumped rt_generation; this setup is built
   // against the new ones.
@@ -3855,10 +3885,29 @@ void Renderer::Impl::Resolve() {
   x1 = rex::align(x1, 8);
   y1 = rex::align(y1, 8);
   x1 = std::min(x1, int32_t(surface_info.surface_pitch));
+  {  // T9 PROBE (temporário)
+    static std::unordered_set<uint64_t> seen;
+    auto off = r.Get<reg::PA_SC_WINDOW_OFFSET>();
+    uint64_t k = uint64_t(surface_info.surface_pitch) ^ (uint64_t(surface_info.msaa_samples) << 14) ^
+                 (uint64_t(uint32_t(x0) & 0xFFF) << 16) ^ (uint64_t(uint32_t(x1) & 0xFFF) << 28) ^
+                 (uint64_t(uint32_t(y1) & 0xFFF) << 40) ^ (uint64_t(off.value & 0xFFF) << 52);
+    if (seen.insert(k).second && seen.size() < 400) {
+      REXLOG_INFO("[T9] resolve-in pitch {} guest_msaa {} rect {},{}-{},{} woff {} {} en {} scissor {},{} {}x{}",
+                  uint32_t(surface_info.surface_pitch), uint32_t(surface_info.msaa_samples), x0, y0, x1,
+                  y1, int32_t(off.window_x_offset), int32_t(off.window_y_offset),
+                  uint32_t(r.Get<reg::PA_SU_SC_MODE_CNTL>().vtx_window_offset_enable),
+                  scissor.offset[0], scissor.offset[1], scissor.extent[0], scissor.extent[1]);
+    }
+  }
   if (x0 >= x1 || y0 >= y1) {
     return;
   }
-  uint32_t msaa = HostMsaa(surface_info.msaa_samples);
+  const edram::Surface surface = SurfaceFor(surface_info);
+  uint32_t msaa = surface.msaa;
+  // The rectangle in the host target: samples when the surface is drawn as them.
+  int32_t host_rect[4] = {x0, y0, x1, y1};
+  surface.ScaleRect(host_rect);
+  const bool scaled = surface.scale_x > 1 || surface.scale_y > 1;
   bool is_depth = copy_control.copy_src_select >= 4;
   ++stats().resolves;
 
@@ -3870,7 +3919,7 @@ void Renderer::Impl::Resolve() {
   VkCommandBuffer c = cmd();
 
   RenderTargetKey source_key = {};
-  source_key.pitch = surface_info.surface_pitch;
+  source_key.pitch = surface.pitch;
   source_key.msaa = msaa;
   if (is_depth) {
     auto depth_info = r.Get<reg::RB_DEPTH_INFO>();
@@ -3883,11 +3932,13 @@ void Renderer::Impl::Resolve() {
     source_key.base_tiles = color_info.color_base;
     source_key.format = uint32_t(color_info.color_format);
   }
-  RenderTarget* source = GetRenderTarget(source_key, uint32_t(y1));
+  RenderTarget* source = GetRenderTarget(source_key, uint32_t(host_rect[3]));
   if (!source) return;
   c = cmd();
   uint32_t width = uint32_t(x1 - x0);
-  uint32_t height = std::min(uint32_t(y1 - y0), source->height - std::min(uint32_t(y0), source->height));
+  uint32_t height =
+      std::min(uint32_t(y1 - y0),
+               (source->height - std::min(uint32_t(host_rect[1]), source->height)) / surface.scale_y);
   if (!height) return;
 
   // Copy.
@@ -3896,6 +3947,23 @@ void Renderer::Impl::Resolve() {
   bool copy = dest_base != 0 &&
               (copy_control.copy_command == xenos::CopyCommand::kRaw ||
                copy_control.copy_command == xenos::CopyCommand::kConvert);
+  {  // T9 PROBE (temporário)
+    static std::unordered_set<uint64_t> seen;
+    auto dp = r.Get<reg::RB_COPY_DEST_PITCH>();
+    uint64_t k = (uint64_t(dest_base) << 32) ^ (uint64_t(dest_info.value) << 8) ^ source_key.format ^
+                 (uint64_t(msaa) << 5) ^ (uint64_t(is_depth) << 7) ^ (uint64_t(x1) << 40) ^ (uint64_t(y1) << 50);
+    if (seen.insert(k).second && seen.size() < 400) {
+      REXLOG_INFO("[T9] resolve src fmt {} depth {} msaa {} pitch {} base {} rect {},{}-{},{} -> dest {:08X} "
+                  "fmt {} bias {} swap {} endian {} pitch {}x{} cmd {} sample {} clear c{} d{}",
+                  uint32_t(source_key.format), is_depth, msaa, uint32_t(surface_info.surface_pitch), uint32_t(source_key.base_tiles),
+                  x0, y0, x1, y1, dest_base, uint32_t(dest_info.copy_dest_format),
+                  int32_t(dest_info.copy_dest_exp_bias), uint32_t(dest_info.copy_dest_swap),
+                  uint32_t(dest_info.copy_dest_endian), uint32_t(dp.copy_dest_pitch),
+                  uint32_t(dp.copy_dest_height), uint32_t(copy_control.copy_command),
+                  uint32_t(copy_control.copy_sample_select), uint32_t(copy_control.color_clear_enable),
+                  uint32_t(copy_control.depth_clear_enable));
+    }
+  }
   if (copy) {
     VkMemoryBarrier to_transfer = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
                                    VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
@@ -3926,7 +3994,29 @@ void Renderer::Impl::Resolve() {
     ResolveDestination* dest = textures.GetResolveDestination(
         dest_base & 0x1FFFFFFF, dest_width, dest_height, dest_format, host_swizzle, c);
     if (dest) {
-      if (is_depth) {
+      if (scaled) {
+        // Samples drawn as pixels: the resolve averages each pixel's samples,
+        // a linear blit to half the size (or half the height for 2x).
+        if (is_depth) {
+          static bool logged = false;
+          if (!logged) {
+            logged = true;
+            REXLOG_WARN("[native] Depth resolve of a {}x{} multisampled surface not done", width,
+                        height);
+          }
+        } else {
+          VkImageBlit blit = {};
+          blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+          blit.dstSubresource = blit.srcSubresource;
+          blit.srcOffsets[0] = {host_rect[0], host_rect[1], 0};
+          blit.srcOffsets[1] = {host_rect[2], host_rect[1] + int32_t(height * surface.scale_y), 1};
+          blit.dstOffsets[0] = {x0, y0, 0};
+          blit.dstOffsets[1] = {x1, y0 + int32_t(height), 1};
+          vkCmdBlitImage(c, source->image, VK_IMAGE_LAYOUT_GENERAL, dest->image,
+                               VK_IMAGE_LAYOUT_GENERAL, 1, &blit, VK_FILTER_LINEAR);
+          textures.CopyToSized(*dest, c);
+        }
+      } else if (is_depth) {
         // Depth cannot be copied into a color image directly. It goes through
         // a scratch buffer, where a compute pass makes both forms a game can
         // read a depth resolve back as: floats, into this R32_SFLOAT image for
@@ -4104,11 +4194,11 @@ void Renderer::Impl::Resolve() {
       auto depth_info = r.Get<reg::RB_DEPTH_INFO>();
       RenderTargetKey key = {};
       key.base_tiles = depth_info.depth_base;
-      key.pitch = surface_info.surface_pitch;
+      key.pitch = surface.pitch;
       key.format = uint32_t(depth_info.depth_format);
       key.msaa = msaa;
       key.is_depth = 1;
-      depth_target = GetRenderTarget(key, uint32_t(y1));
+      depth_target = GetRenderTarget(key, uint32_t(host_rect[3]));
       clear_targets.depth = depth_target;
     }
     if (clear_color) {
@@ -4133,6 +4223,16 @@ void Renderer::Impl::Resolve() {
                 ? xenos::Float20e4To32(depth24)
                 : xenos::UNorm24To32(depth24);
         a.clearValue.depthStencil.stencil = clear & 0xFF;
+        {  // T9 PROBE (temporário)
+          static std::unordered_set<uint64_t> seen;
+          uint64_t k = (uint64_t(clear) << 16) ^ depth_target->key.format ^ (uint64_t(depth_target->key.base_tiles) << 4);
+          if (seen.insert(k).second && seen.size() < 100) {
+            REXLOG_INFO("[T9] depth clear fmt {} base {} pitch {} raw {:08X} -> {} host fmt {}",
+                        uint32_t(depth_target->key.format), uint32_t(depth_target->key.base_tiles),
+                        uint32_t(depth_target->key.pitch), clear, a.clearValue.depthStencil.depth,
+                        int(depth_target->format));
+          }
+        }
       }
       if (color_target) {
         VkClearAttachment& a = attachments[count++];
@@ -4189,9 +4289,12 @@ void Renderer::Impl::Resolve() {
         }
       }
       VkClearRect rect = {};
-      rect.rect.offset = {x0, y0};
-      rect.rect.extent = {std::min(width, pass_extent.width - std::min(uint32_t(x0), pass_extent.width)),
-                          std::min(height, pass_extent.height - std::min(uint32_t(y0), pass_extent.height))};
+      const uint32_t host_x0 = uint32_t(host_rect[0]), host_y0 = uint32_t(host_rect[1]);
+      rect.rect.offset = {host_rect[0], host_rect[1]};
+      rect.rect.extent = {
+          std::min(width * surface.scale_x, pass_extent.width - std::min(host_x0, pass_extent.width)),
+          std::min(height * surface.scale_y,
+                   pass_extent.height - std::min(host_y0, pass_extent.height))};
       rect.layerCount = 1;
       if (rect.rect.extent.width && rect.rect.extent.height) {
         dfn().vkCmdClearAttachments(c, count, attachments, 1, &rect);
@@ -4244,6 +4347,30 @@ void Renderer::Impl::Swap(rex::ui::Presenter* presenter, uint32_t frontbuffer, u
   if (fetch.type == xenos::FetchConstantType::kTexture && fetch.base_address) {
     address = fetch.base_address << 12;
     guest_swizzle = fetch.swizzle;
+  }
+  {  // T9 PROBE (temporário)
+    static std::vector<uint32_t> show;
+    static bool parsed = false;
+    static uint64_t swaps = 0;
+    if (!parsed) {
+      parsed = true;
+      if (const char* e = getenv("GH3_T9_SHOW")) {
+        std::string s = e;
+        size_t p = 0;
+        while (p < s.size()) {
+          size_t q = s.find(',', p);
+          if (q == std::string::npos) q = s.size();
+          show.push_back(uint32_t(strtoul(s.substr(p, q - p).c_str(), nullptr, 16)));
+          p = q + 1;
+        }
+      }
+    }
+    ++swaps;
+    if (!show.empty()) {
+      uint32_t a = show[(swaps / 100) % show.size()];
+      if (a) address = a & 0x1FFFFFFF;
+      if (a & 0x80000000u) guest_swizzle = 0x6DB;  // AAAA
+    }
   }
   uint32_t source_width = 0, source_height = 0;
   VkImageView source_view =

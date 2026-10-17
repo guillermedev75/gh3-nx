@@ -6,9 +6,13 @@ todos os pixels. Serve para pegar o palco 3D que sai branco (T9) ou um quadro ch
 Só stdlib: o PNG é decodificado com zlib (8 bits, RGB ou RGBA, sem entrelaçamento; o src/parity_capture.h
 escreve RGB com filtro None).
 
+Com --compare REF.png, também a diferença média por canal (0–255) contra outro quadro do mesmo tamanho: o
+nativo contra o emulado de referência (T9).
+
 Uso:
   python3 tools/image_stats.py QUADRO.png [--max-white F] [--min-stddev S]
-Sai 0 dentro dos limites, 1 fora, 2 se o arquivo não for um PNG que ele lê.
+  python3 tools/image_stats.py QUADRO.png --compare REF.png [--max-mean-diff D]
+Sai 0 dentro dos limites, 1 fora, 2 se um arquivo não for um PNG que ele lê ou os tamanhos diferirem.
 """
 from __future__ import annotations
 
@@ -118,11 +122,18 @@ def stats(rgb):
     return white / n, var ** 0.5, mean
 
 
+def mean_diff(a, b):
+    """Diferença absoluta média por canal entre dois RGB do mesmo tamanho."""
+    return sum(abs(x - y) for x, y in zip(a, b)) / len(a)
+
+
 def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("png")
     ap.add_argument("--max-white", type=float)
     ap.add_argument("--min-stddev", type=float)
+    ap.add_argument("--compare", metavar="REF")
+    ap.add_argument("--max-mean-diff", type=float)
     a = ap.parse_args(argv)
     try:
         w, h, rgb = read_png(a.png)
@@ -139,6 +150,19 @@ def main(argv):
         bad.append(f"white {white:.3f} > {a.max_white}")
     if a.min_stddev is not None and std < a.min_stddev:
         bad.append(f"stddev {std:.1f} < {a.min_stddev}")
+    if a.compare:
+        try:
+            rw, rh, ref = read_png(a.compare)
+        except (OSError, PngError) as e:
+            print(f"ERRO: {a.compare}: {e}")
+            return 2
+        if (rw, rh) != (w, h):
+            print(f"ERRO: {a.compare} é {rw}x{rh}, {a.png} é {w}x{h}")
+            return 2
+        diff = mean_diff(rgb, ref)
+        print(f"{a.png} vs {a.compare}: mean_diff={diff:.1f}")
+        if a.max_mean_diff is not None and diff > a.max_mean_diff:
+            bad.append(f"mean_diff {diff:.1f} > {a.max_mean_diff}")
     if bad:
         print("FALHOU: " + "; ".join(bad))
         return 1

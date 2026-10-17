@@ -32,3 +32,12 @@ def test_renderer_expands_primitives_without_geometry_shaders():
     src = (ROOT / "src/native/native_renderer.cpp").read_text()
     assert '#include "native_primitive_expand.h"' in src
     assert "expand::Choose(expand_primitive, properties.geometryShader != VK_FALSE)" in src
+
+
+def test_renderer_draws_msaa_surfaces_as_edram_samples():
+    # T9: o GH3 limpa o alvo 1x por um alias 4x de meio pitch; draws, clears e resolves passam por
+    # native_edram_samples.h para cair no mesmo alvo (o Switch tem gh3_native_msaa=false e o mesmo problema)
+    src = (ROOT / "src/native/native_renderer.cpp").read_text()
+    assert '#include "native_edram_samples.h"' in src
+    assert 'REXCVAR_DEFINE_BOOL(gh3_native_msaa_as_samples, true' in src
+    assert src.count("SurfaceFor(") >= 4  # draw, resolve, clear e as constantes de sistema

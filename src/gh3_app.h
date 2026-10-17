@@ -18,6 +18,7 @@
 #include <spdlog/sinks/base_sink.h>
 
 #include "dump_gate.h"
+#include "mark_screenshot.h"
 #include "parity_capture.h"
 #include "present_counter.h"
 #include "rexglue_script_input.h"
@@ -32,10 +33,17 @@ extern "C" rex::system::IGraphicsSystem* rex_gpu_create(uint32_t abi_version,
                                                          const rex::system::GpuCreateInfo* info);
 #endif
 
+#include <cstdio>
 #include <cstdlib>
+#include <rex/graphics/pipeline/texture/util.h>
+#include <vector>
 #include <fstream>
 #include <memory>
 #include <string_view>
+
+REXCVAR_DEFINE_STRING(mark_screenshot, "", "Parity",
+                      "Comma-separated input-script marks to screenshot (\"*\" = every mark), "
+                      "written to --mark_screenshot_dir");
 
 // Conta os quadros apresentados para o índice da captura de paridade (src/present_counter.h). Sem mutex:
 // Observe() só mexe num atômico.
@@ -87,13 +95,29 @@ class Gh3App : public rex::ReXApp {
     std::ofstream(out, std::ios::binary)
         .write(reinterpret_cast<const char*>(image), PPCImageConfig.image_size);
   }
-  // Captura da saída do guest (src/parity_capture.h): parada até --parity_capture_frames ou F10.
-  void OnPostSetup() override { parity_capture_.Start(runtime()); }
+  // Captura da saída do guest (src/parity_capture.h): parada até --parity_capture_frames, F10 ou uma marca
+  // do roteiro pedida em --mark_screenshot (src/mark_screenshot.h), que vira mark_<nome>_<modo>.png.
+  void OnPostSetup() override {
+    parity_capture_.Start(runtime());
+    std::string marks = REXCVAR_GET(mark_screenshot);
+    if (!marks.empty()) {
+      rexglue_script_input::SetMarkObserver(
+          [this, marks](size_t, const std::string& name, int64_t t_ms) {
+            if (gh3::mark_screenshot::Wanted(marks, name)) {
+              parity_capture_.RequestNamedCapture(name, t_ms);
+            }
+            if (name == "gameplay") T9DumpProbe();  // T9 PROBE (temporário)
+          });
+    }
+  }
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override { parity_capture_.RegisterBinds(); }
   // std::unique_ptr<rex::ui::ImGuiDialog> CreateAchievementsOverlay() override;
   // std::unique_ptr<rex::ui::AchievementNotificationDialog>
   // CreateAchievementNotificationDialog() override;
-  void OnShutdown() override { parity_capture_.Stop(); }
+  void OnShutdown() override {
+    rexglue_script_input::SetMarkObserver({});
+    parity_capture_.Stop();
+  }
   // Trava do default.xex (src/dump_gate.h): o último gancho antes do Runtime existir, então recusar
   // aqui não deixa nada pela metade. Sem flag para desligar.
   void OnConfigurePaths(rex::PathConfig& paths) override {
@@ -104,6 +128,34 @@ class Gh3App : public rex::ReXApp {
     }
 #endif
     dump_gate::Enforce(paths.game_data_root);
+  }
+
+  // T9 PROBE (temporário): GH3_T9_DUMP="ADDR:W:H,..." despeja regiões 32 bpp tiladas da memória do guest.
+  void T9DumpProbe() {
+    const char* e = std::getenv("GH3_T9_DUMP");
+    if (!e) return;
+    std::string s = e;
+    size_t p = 0;
+    while (p < s.size()) {
+      size_t q = s.find(',', p);
+      if (q == std::string::npos) q = s.size();
+      std::string item = s.substr(p, q - p);
+      p = q + 1;
+      uint32_t addr = 0, w = 0, h = 0;
+      if (std::sscanf(item.c_str(), "%x:%u:%u", &addr, &w, &h) != 3) continue;
+      const uint8_t* base = runtime()->memory()->TranslatePhysical<const uint8_t*>(addr);
+      std::vector<uint8_t> out(size_t(w) * h * 4);
+      uint32_t pitch = (w + 31) & ~31u;
+      for (uint32_t y = 0; y < h; ++y)
+        for (uint32_t x = 0; x < w; ++x) {
+          int32_t off = rex::graphics::texture_util::GetTiledOffset2D(int32_t(x), int32_t(y), pitch, 2);
+          const uint8_t* src = base + off;
+          uint8_t* dst = &out[(size_t(y) * w + x) * 4];
+          dst[0] = src[3]; dst[1] = src[2]; dst[2] = src[1]; dst[3] = src[0];
+        }
+      std::ofstream(fmt::format("out/t9/dump_{:08X}_{}x{}.raw", addr, w, h), std::ios::binary)
+          .write(reinterpret_cast<const char*>(out.data()), out.size());
+    }
   }
 
  private:
