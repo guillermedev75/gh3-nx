@@ -1,0 +1,12 @@
+# Fronteiras de função que a análise do ReXGlue 0.10.0 não detectou sozinha (revisão multi 5 idiomas).
+# Origem: alvos de 'b' reportados como UnresolvedCall no codegen (out/codegen.stdout, 2026-10-17).
+[functions]
+0x82118E54 = { name = "sub_82118E54" }  # alvo de b em 0x82118F48
+0x8232C378 = { name = "sub_8232C378" }  # alvo de b em 0x8225B8FC
+0x8232C388 = { name = "sub_8232C388" }  # alvo de b em 0x8225B914
+0x8232C398 = { name = "sub_8232C398" }  # alvo de b em 0x8225B92C
+0x8232C458 = { name = "sub_8232C458" }  # alvo de b em 0x8225BC7C
+0x82331890 = { name = "sub_82331890" }  # alvo de b em 0x821C0CBC
+0x82360110 = { name = "sub_82360110" }  # alvo de b em 0x8222B9D8
+0x8279BC60 = { name = "sub_8279BC60" }  # alvo de b em 0x8279CAA4
+0x827A6758 = { name = "sub_827A6758" }  # alvo de b em 0x827A6B34
