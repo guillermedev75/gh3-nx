@@ -58,6 +58,7 @@ extern "C" {
 #endif
 
 #include "native_geometry_shaders.h"
+#include "native_primitive_expand.h"
 #include "native_hash.h"
 #include "native_textures.h"
 
@@ -581,6 +582,9 @@ struct Renderer::Impl {
     bool primitive_polygonal = false;
     reg::RB_DEPTHCONTROL depth_control = {};
     bool convert_fan = false, convert_loop = false, strip = false, reset_enabled = false;
+    // Without geometry shaders (native_primitive_expand.h).
+    bool convert_quad = false;
+    Shader::HostVertexShaderType host_vs_type = Shader::HostVertexShaderType::kVertex;
     draw_util::Scissor scissor = {};
     draw_util::ViewportInfo viewport = {};
     PassTargets targets;
@@ -2764,6 +2768,16 @@ bool Renderer::Impl::BuildDrawSetup(uint32_t initiator_value) {
   xenos::PrimitiveType guest_type = initiator.prim_type;
   VkPrimitiveTopology topology;
   PipelineGeometryShader geometry = PipelineGeometryShader::kNone;
+  namespace expand = gh3::native::expand;
+  expand::Primitive expand_primitive = guest_type == xenos::PrimitiveType::kPointList
+                                           ? expand::Primitive::kPointList
+                                       : guest_type == xenos::PrimitiveType::kRectangleList
+                                           ? expand::Primitive::kRectangleList
+                                       : guest_type == xenos::PrimitiveType::kQuadList
+                                           ? expand::Primitive::kQuadList
+                                           : expand::Primitive::kOther;
+  expand::Expansion expansion =
+      expand::Choose(expand_primitive, properties.geometryShader != VK_FALSE);
   switch (guest_type) {
     case xenos::PrimitiveType::kPointList:
       topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
@@ -2803,6 +2817,17 @@ bool Renderer::Impl::BuildDrawSetup(uint32_t initiator_value) {
     default:
       return fail(4);
   }
+  if (expansion == expand::Expansion::kQuadToTriangles) {
+    topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    geometry = PipelineGeometryShader::kNone;
+    st.convert_quad = true;
+  } else if (expansion == expand::Expansion::kVertexShaderStrip) {
+    topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    geometry = PipelineGeometryShader::kNone;
+    st.host_vs_type = guest_type == xenos::PrimitiveType::kPointList
+                          ? Shader::HostVertexShaderType::kPointListAsTriangleStrip
+                          : Shader::HostVertexShaderType::kRectangleListAsTriangleStrip;
+  }
   if (geometry != PipelineGeometryShader::kNone && !properties.geometryShader) return fail(5);
   bool indexed = initiator.source_select != xenos::SourceSelect::kAutoIndex;
   st.reset_enabled =
@@ -2817,7 +2842,7 @@ bool Renderer::Impl::BuildDrawSetup(uint32_t initiator_value) {
          : 0;
   SpirvShaderTranslator::Modification vs_mod(translator->GetDefaultVertexShaderModification(
       vs->GetDynamicAddressableRegisterCount(r.Get<reg::SQ_PROGRAM_CNTL>().vs_num_reg),
-      Shader::HostVertexShaderType::kVertex));
+      st.host_vs_type));
   vs_mod.vertex.interpolator_mask = interpolator_mask;
   auto pa_cl_clip_cntl = r.Get<reg::PA_CL_CLIP_CNTL>();
   uint32_t user_clip_planes = pa_cl_clip_cntl.clip_disable ? 0 : pa_cl_clip_cntl.ucp_ena;
@@ -2832,9 +2857,16 @@ bool Renderer::Impl::BuildDrawSetup(uint32_t initiator_value) {
   }
   vs_mod.vertex.user_clip_plane_count = rex::bit_count(user_clip_planes);
   vs_mod.vertex.point_ps_ucp_mode = pa_cl_clip_cntl.ps_ucp_mode;
-  vs_mod.vertex.output_point_parameters =
-      uint32_t((vs->writes_point_size_edge_flag_kill_vertex() & 0b001) &&
-               guest_type == xenos::PrimitiveType::kPointList);
+  if (st.host_vs_type == Shader::HostVertexShaderType::kPointListAsTriangleStrip) {
+    // The point coordinates for the pixel shader, not the size
+    // (VulkanPipelineCache::GetCurrentVertexShaderModification).
+    vs_mod.vertex.output_point_parameters =
+        uint32_t(ps && ps_param_gen_pos < xenos::kMaxInterpolators);
+  } else {
+    vs_mod.vertex.output_point_parameters =
+        uint32_t((vs->writes_point_size_edge_flag_kill_vertex() & 0b001) &&
+                 guest_type == xenos::PrimitiveType::kPointList);
+  }
   vs_mod.vertex.vertex_kill_and =
       uint32_t(properties.shaderCullDistance &&
                (vs->writes_point_size_edge_flag_kill_vertex() & 0b100) &&
@@ -2957,7 +2989,9 @@ bool Renderer::Impl::BuildDrawSetup(uint32_t initiator_value) {
   key.depth_format = targets.depth ? uint32_t(targets.depth->format) : 0;
   key.samples = 1u << msaa;
   key.topology = uint32_t(topology);
-  key.primitive_restart = st.reset_enabled ? 1 : 0;
+  // The expanded strips are separated by restarts.
+  key.primitive_restart =
+      st.reset_enabled || st.host_vs_type != Shader::HostVertexShaderType::kVertex ? 1 : 0;
   auto sc_mode = r.Get<reg::PA_SU_SC_MODE_CNTL>();
   if (primitive_polygonal) {
     key.cull_mode = (sc_mode.cull_front ? VK_CULL_MODE_FRONT_BIT : 0) |
@@ -3168,6 +3202,8 @@ void Renderer::Impl::Draw(const uint32_t* immediate_indices, uint32_t immediate_
   bool index32 = initiator.index_size == xenos::IndexFormat::kInt32;
   bool reset_enabled = st.reset_enabled;
   bool convert_fan = st.convert_fan, convert_loop = st.convert_loop;
+  bool convert_quad = st.convert_quad;
+  bool vs_strip = st.host_vs_type != Shader::HostVertexShaderType::kVertex;
   uint32_t reset_index = r.Get<reg::VGT_MULTI_PRIM_IB_RESET_INDX>().reset_indx;
   const uint8_t* guest_indices = nullptr;
   xenos::Endian index_endian = dma_size.swap_mode;
@@ -3202,16 +3238,55 @@ void Renderer::Impl::Draw(const uint32_t* immediate_indices, uint32_t immediate_
     return xenos::GpuSwap(v, index_endian);
   };
   uint32_t draw_count = guest_count;
-  bool host_indexed = indexed || convert_fan || convert_loop;
+  bool host_indexed = indexed || convert_fan || convert_loop || convert_quad || vs_strip;
   VkIndexType index_type = index32 ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
   VkDeviceSize index_offset = 0;
-  if (host_indexed) {
+  // Points and rectangles expanded in the vertex shader: the host draws
+  // two-triangle strips, and the shader reads the guest indices (if any)
+  // itself, from their copy in the stream (the shared memory binding).
+  bool index_load = false;
+  uint32_t index_load_address = 0;
+  xenos::Endian index_load_endian = xenos::Endian::kNone;
+  if (vs_strip) {
+    uint32_t primitives = gh3::native::expand::ExpandedPrimitiveCount(
+        st.host_vs_type == Shader::HostVertexShaderType::kRectangleListAsTriangleStrip
+            ? gh3::native::expand::Primitive::kRectangleList
+            : gh3::native::expand::Primitive::kPointList,
+        guest_count);
+    if (!primitives) return;
+    if (indexed) {
+      uint32_t bytes = guest_count * (index32 ? 4 : 2);
+      VkDeviceSize load_offset;
+      uint8_t* copy = Allocate(bytes, 4, load_offset);
+      if (!copy) return skip(9);
+      std::memcpy(copy, guest_indices, bytes);
+      index_load = true;
+      index_load_address = uint32_t(load_offset);
+      // VulkanCommandProcessor::UpdateSystemConstantValues: 16-bit indices
+      // only swap within 16 bits.
+      index_load_endian = index_endian;
+      if (!index32 && index_load_endian != xenos::Endian::kNone &&
+          index_load_endian != xenos::Endian::k8in16) {
+        index_load_endian = index_load_endian == xenos::Endian::k8in32 ? xenos::Endian::k8in16
+                                                                       : xenos::Endian::kNone;
+      }
+    }
+    draw_count = gh3::native::expand::TwoTriangleStripIndexCount(primitives);
+    index_type = VK_INDEX_TYPE_UINT32;
+    uint32_t* strips = reinterpret_cast<uint32_t*>(
+        Allocate(VkDeviceSize(draw_count) * 4, 4, index_offset));
+    if (!strips) return skip(9);
+    gh3::native::expand::WriteTwoTriangleStrips(primitives, strips);
+  } else if (host_indexed) {
     if (convert_fan) {
       if (guest_count < 3) return;
       draw_count = (guest_count - 2) * 3;
     } else if (convert_loop) {
       if (guest_count < 2) return;
       draw_count = guest_count + 1;
+    } else if (convert_quad) {
+      draw_count = gh3::native::expand::QuadListIndexCount(guest_count);
+      if (!draw_count) return;
     }
     if (!indexed) {
       index_type = VK_INDEX_TYPE_UINT32;
@@ -3221,7 +3296,7 @@ void Renderer::Impl::Draw(const uint32_t* immediate_indices, uint32_t immediate_
     // copy while the guest data is the same (checked once per frame).
     bool reused = false;
     VertexRangeKey index_key = {};
-    if (dma_base && !convert_fan && !convert_loop) {
+    if (dma_base && !convert_fan && !convert_loop && !convert_quad) {
       uint32_t bytes = guest_count * (index32 ? 4 : 2);
       VertexHash& known = vertex_hashes[(uint64_t(dma_base) << 32) | bytes];
       RangeHash(known, guest_indices, bytes, dma_base);
@@ -3266,6 +3341,8 @@ void Renderer::Impl::Draw(const uint32_t* immediate_indices, uint32_t immediate_
       } else if (convert_loop) {
         for (uint32_t i = 0; i < guest_count; ++i) put(i, read_index(i));
         put(guest_count, read_index(0));
+      } else if (convert_quad) {
+        gh3::native::expand::QuadListToTriangleList(guest_count, read_index, put);
       } else if (!reset_enabled && index_endian == xenos::Endian::kNone) {
         std::memcpy(out, guest_indices, size_t(draw_count) * index_size);
       } else if (!reset_enabled && index_size == 2 && index_endian == xenos::Endian::k8in16) {
@@ -3593,7 +3670,8 @@ void Renderer::Impl::Draw(const uint32_t* immediate_indices, uint32_t immediate_
 
   // System constants come from the render state, the texture fetch
   // constants and the vertex index registers.
-  bool system_same = last_system.submission == submission_number &&
+  // Draws reading their indices in the shader point at a fresh copy each time.
+  bool system_same = !index_load && last_system.submission == submission_number &&
                      system_inputs.setup_generation == setup_generation &&
                      system_inputs.fetch_generation == owner->fetch_generation_ &&
                      system_inputs.index_generation == owner->index_generation_ &&
@@ -3602,6 +3680,17 @@ void Renderer::Impl::Draw(const uint32_t* immediate_indices, uint32_t immediate_
     UpdateSystemConstants(st.primitive_polygonal, st.viewport, tb.used_mask, 0, vs, ps);
     system_inputs = {setup_generation, owner->fetch_generation_, owner->index_generation_,
                      tb.used_mask};
+    if (index_load) {
+      system_constants.flags |= SpirvShaderTranslator::kSysFlag_ComputeOrPrimitiveVertexIndexLoad;
+      if (index32) {
+        system_constants.flags |=
+            SpirvShaderTranslator::kSysFlag_ComputeOrPrimitiveVertexIndexLoad32Bit;
+      }
+      system_constants.vertex_index_load_address = index_load_address;
+      system_constants.vertex_index_endian = index_load_endian;
+      // The next draw builds them again.
+      system_inputs.setup_generation = ~0ull;
+    }
     system_same = last_system.submission == submission_number &&
                   !std::memcmp(&last_system_constants, &system_constants,
                                sizeof(system_constants));

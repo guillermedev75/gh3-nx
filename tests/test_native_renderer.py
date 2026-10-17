@@ -25,3 +25,10 @@ def test_native_sources_are_built():
 def test_no_thps_names_left_in_native_sources():
     for f in (ROOT / "src/native").glob("*.[ch]*"):
         assert not re.search(r"\bthps_renderer\b|namespace thps\b", f.read_text()), f
+
+
+def test_renderer_expands_primitives_without_geometry_shaders():
+    # MoltenVK não tem geometryShader: ret/quad/ponto passam por native_primitive_expand.h
+    src = (ROOT / "src/native/native_renderer.cpp").read_text()
+    assert '#include "native_primitive_expand.h"' in src
+    assert "expand::Choose(expand_primitive, properties.geometryShader != VK_FALSE)" in src
