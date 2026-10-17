@@ -16,8 +16,9 @@ cd "$(dirname "$0")/.."
 files=()
 if [ $# -gt 0 ]; then
   [ -d "$1" ] || { echo "não é uma pasta: $1" >&2; exit 2; }
-  root=$1
-  while IFS= read -r -d '' f; do files+=("${f#"$root"/}"); done < <(find "$root" -type f -print0)
+  root=${1%/}
+  # -L segue symlinks: um link para um arquivo do jogo dentro do pacote também conta.
+  while IFS= read -r -d '' f; do files+=("${f#"$root"/}"); done < <(find -L "$root" -type f -print0)
   mode=dir
 else
   root=.
@@ -35,6 +36,8 @@ report() {
   printf '   %s\n' "$@"
   fail=1
 }
+
+shopt -s nocasematch  # DEFAULT.XEX, game.ISO, data/ contam igual (bash 3.2 tem)
 
 check_glob() {
   local pattern="$1" why="$2" f
@@ -65,14 +68,18 @@ check_glob 'generated/*'     'saída do recompilador está na árvore'
 check_glob '*/generated/*'   'saída do recompilador está na árvore'
 check_glob '*_recomp.*.cpp'  'unidades de tradução geradas estão na árvore'
 check_glob 'extracted/*'     'o disco extraído está na árvore'
+check_glob '$SYSTEMUPDATE/*'  'a atualização de sistema do disco está na árvore'
+check_glob '*/$SYSTEMUPDATE/*' 'a atualização de sistema do disco está na árvore'
 
-# Pelo conteúdo: um XEX2 renomeado continua sendo o executável do jogo.
-xex=()
+# Pelo conteúdo: XEX2 renomeado e contêineres da Xbox (STFS/GOD: CON, LIVE, PIRS) continuam sendo do disco.
+magic=()
 for f in ${files[@]+"${files[@]}"}; do
   [ -f "$root/$f" ] || continue
-  [ "$(head -c 4 "$root/$f" 2>/dev/null)" = "XEX2" ] && xex+=("$f")
+  case "$(head -c 4 "$root/$f" 2>/dev/null)" in
+    XEX2|"CON "|LIVE|PIRS) magic+=("$f") ;;
+  esac
 done
-if [ "${#xex[@]}" -gt 0 ]; then report 'um arquivo com cabeçalho XEX2 está na árvore' "${xex[@]}"; fi
+if [ "${#magic[@]}" -gt 0 ]; then report 'um arquivo com cabeçalho XEX2/CON/LIVE/PIRS está na árvore' "${magic[@]}"; fi
 
 # Rede de segurança no repo: tudo o que é legítimo aqui é código, config ou ícone. No pacote do SD
 # não vale, porque o NRO passa de 8 MB.
@@ -80,7 +87,7 @@ if [ "$mode" = repo ]; then
   big=()
   for f in ${files[@]+"${files[@]}"}; do
     [ -f "$f" ] || continue
-    size=$(stat -f%z "$f" 2>/dev/null || stat -c%s "$f" 2>/dev/null || echo 0)
+    size=$(wc -c < "$f" | tr -d " ")
     [ "$size" -gt $((8 * 1024 * 1024)) ] && big+=("$f ($((size / 1024 / 1024)) MB)")
   done
   if [ "${#big[@]}" -gt 0 ]; then report 'um arquivo de mais de 8 MB está na árvore' "${big[@]}"; fi

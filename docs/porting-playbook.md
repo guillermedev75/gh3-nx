@@ -48,9 +48,9 @@ Fluxo, do mais barato ao mais caro:
    ```
    GH3_DUMP_IMAGE=out/image.bin ./run-gh3.command          # grava a imagem descriptografada (hook em src/gh3_app.h)
    python3 tools/find_missing_funcs.py out/image.bin --toml >> config/gh3_functions.toml
-   cmake --build out/build/mac-arm64-release > out/build.log
+   cmake --build out/build/mac-arm64-p8sdk > out/build.log
    python3 tools/find_missing_funcs.py --prune out/build.log  # tira candidatos que partiram funções
-   cmake --build out/build/mac-arm64-release
+   cmake --build out/build/mac-arm64-p8sdk
    ```
    Validação: das 10 funções achadas na marra, a varredura acha 9 (todas apontadas por ponteiro).
    No GH3: 106 candidatos → 15 falsos positivos removidos pelo `--prune` → 91 registrados.
@@ -74,3 +74,11 @@ Fluxo, do mais barato ao mais caro:
 - Upscaling tipo DLSS/FSR (renderizar menor e ampliar) só ajuda se o gargalo for a GPU desenhando pixels. No Mac
   com GPU emulada o custo principal tende a ser CPU (tradução de comandos Xenos → Vulkan → Metal); medir antes.
 - Geração de quadros (Lossless Scaling, FSR 3 FG) adiciona latência: fora para jogo de ritmo; opcional nos outros.
+
+## 6. Revisão do marco C (2026-10-17)
+
+- O preset do SDK 0.10.0 pronto (`mac-arm64-release`) foi aposentado: a trava do `default.xex` precisa de
+  `rex/crypto/sha256.h`, que só o SDK patcheado tem. `src/gh3_app.h` dá `#error` claro; tudo usa `mac-arm64-p8sdk`.
+- `check_no_game_content.sh` tinha brechas (pasta `$SYSTEMUPDATE`, `DIR/` com barra pulando a checagem por
+  conteúdo, maiúsculas, contêineres STFS/GOD `CON `/`LIVE`/`PIRS`, symlinks): corrigidas, com teste para cada uma.
+- O pacote do SD é só para uso pessoal (o NRO tem o `generated/` compilado).

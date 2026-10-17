@@ -29,7 +29,7 @@ def build(tmp_path):
     (inc / "supported_dumps.h").write_text(TABLE)
     (tmp_path / "main.cpp").write_text(MAIN)
     exe = tmp_path / "gate"
-    subprocess.run(["c++", "-std=c++20", f"-I{inc}", str(tmp_path / "main.cpp"), "-o", str(exe)], check=True)
+    subprocess.run(["c++", "-std=c++23", f"-I{inc}", str(tmp_path / "main.cpp"), "-o", str(exe)], check=True)
     return exe
 
 def verdict(exe, digest, size):
@@ -53,3 +53,11 @@ def test_app_enforces_gate_before_runtime():
 def test_committed_table_has_one_gh3_row():
     h = Path("src/supported_dumps.h").read_text()
     assert "namespace gh3::identify" in h and h.count('"0x415607F7"') >= 1
+
+
+def test_app_refuses_prebuilt_sdk_with_clear_error():
+    # Revisão do marco C: o preset 0.10.0 pronto quebrava com "no type named 'Enforce'". Agora: #error explicando.
+    import subprocess
+    r = subprocess.run(["c++", "-std=c++23", "-fsyntax-only", "-Isrc", "-Itools/rexglue/mac-arm64/include",
+                        "-x", "c++", "src/gh3_app.h"], capture_output=True, text=True)
+    assert r.returncode != 0 and "SDK patcheado" in r.stderr

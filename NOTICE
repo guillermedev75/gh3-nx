@@ -26,6 +26,15 @@ src/dump_gate.h e tools/check_no_game_content.sh
   aceita uma pasta (o pacote do SD), confere cabeçalho XEX2 por conteúdo e roda no
   bash 3.2 do macOS.
 
+src/native/native_renderer.cpp, mudanças de 2026-10-17 (T7 do marco C)
+  Sem geometryShader (MoltenVK no macOS), quad lists viram triangle lists por
+  índices e rectangle/point lists usam o caminho TriangleStrip do tradutor SPIR-V
+  do SDK, com leitura de índices no vertex shader (src/native/native_primitive_expand.h).
+  Com geometry shader (NVK no Switch) o caminho original não muda.
+
+O pacote do SD (tools/make_sd_package.sh) é só para uso pessoal: o NRO contém a
+tradução do executável do jogo (generated/) e não pode ser publicado.
+
 O texto da GPL-3.0 está em LICENSE.
 
 Este repositório não distribui imagem de disco, executável original nem arquivos

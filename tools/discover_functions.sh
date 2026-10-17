@@ -19,6 +19,6 @@ for i in $(seq 1 "$MAX"); do
   if grep -q "^$addr " config/gh3_functions.toml; then echo "ciclo $i: $addr já registrado e voltou a falhar — parar"; exit 1; fi
   echo "ciclo $i: quadros $frames, registrando $addr"
   echo "$addr = { name = \"sub_${addr#0x}\" }  # chamada indireta descoberta em runtime (discover_functions.sh, $(date +%F))" >> config/gh3_functions.toml
-  cmake --build out/build/mac-arm64-release -j10 > out/discover-build.log 2>&1 || { echo "build falhou"; grep error out/discover-build.log | head -3; exit 1; }
+  cmake --build out/build/mac-arm64-p8sdk -j10 > out/discover-build.log 2>&1 || { echo "build falhou"; grep error out/discover-build.log | head -3; exit 1; }
 done
 echo "chegou a MAX=$MAX ciclos"

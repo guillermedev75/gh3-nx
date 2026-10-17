@@ -3,6 +3,7 @@
 #
 #   tools/make_sd_package.sh [--nro build/switch/gh3.nro] [--out out/sd]
 #
+# USO PESSOAL, NUNCA PUBLICAR: o NRO contém o generated/ compilado (tradução do código da publisher).
 # Só o que o port produz. O jogo (game/ ao lado do NRO) vem do disco do próprio jogador e é copiado
 # por ele (H2 no plano); por isso o pacote passa no tools/check_no_game_content.sh antes de sair.
 set -euo pipefail

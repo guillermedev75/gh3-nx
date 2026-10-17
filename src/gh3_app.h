@@ -4,6 +4,12 @@
 
 #pragma once
 
+#if !__has_include(<rex/crypto/sha256.h>)
+// O SDK 0.10.0 pronto (tools/rexglue, preset mac-arm64-release) não tem rex/crypto/sha256.h, que a trava do
+// default.xex usa. Erro claro em vez de trava desligada em silêncio.
+#error "gh3 precisa do SDK patcheado: tools/setup_sdk.sh && tools/build_host_sdk.sh (preset mac-arm64-p8sdk)"
+#endif
+
 #include <rex/filesystem.h>
 #include <rex/rex_app.h>
 #include <rex/runtime.h>

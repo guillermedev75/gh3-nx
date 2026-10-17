@@ -21,14 +21,15 @@ def run(tmp_path, **env):
 
 
 def test_default_build_dir(tmp_path):
-    fake_checkout(tmp_path, "out/build/mac-arm64-release")
+    # Desde a revisão do marco C o padrão é o SDK patcheado (o preset 0.10.0 pronto foi aposentado).
+    fake_checkout(tmp_path, "out/build/mac-arm64-p8sdk")
     env = {k: v for k, v in os.environ.items() if k != "GH3_BUILD_DIR"}
     r = subprocess.run([str(tmp_path / "run-gh3.command")], capture_output=True, text=True, timeout=30,
                        env=dict(env, GH3_LOG_FILE=str(tmp_path / "x.log")))
-    assert r.stdout.strip() == "out/build/mac-arm64-release", r.stderr
+    assert r.stdout.strip() == "out/build/mac-arm64-p8sdk", r.stderr
 
 
 def test_gh3_build_dir_overrides(tmp_path):
-    fake_checkout(tmp_path, "out/build/mac-arm64-p8sdk")
-    r = run(tmp_path, GH3_BUILD_DIR="out/build/mac-arm64-p8sdk")
-    assert r.stdout.strip() == "out/build/mac-arm64-p8sdk", r.stderr
+    fake_checkout(tmp_path, "out/build/outro")
+    r = run(tmp_path, GH3_BUILD_DIR="out/build/outro")
+    assert r.stdout.strip() == "out/build/outro", r.stderr
