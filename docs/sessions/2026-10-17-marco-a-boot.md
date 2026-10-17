@@ -30,3 +30,10 @@ Estado: o `default.xex` (USA/Europa multi 5) recompilado roda no macOS arm64 com
 - T5: teste de boot automático (contar `PRESENT` ≥ 300 quadros) no oráculo.
 - Avisos `primitive restart` do MoltenVK (milhares por execução): inofensivos até aqui.
 - Validar menu e controles; testar uma música.
+
+## Marco C — primeiro boot no Switch (mesmo dia, 18:20)
+
+- NRO (`build/switch/gh3.nro`, 57 MB) + `game/` copiados para `sdmc:/switch/gh3-nx/`, aberto em title takeover num Switch Mariko.
+- Resultado (relatado): roda inteiro, sem bugs além do brilho excessivo; abaixo de ~20 FPS nos clocks de fábrica, jogável com OC.
+- Mac, renderer nativo: 38–44 FPS na gameplay (log), contra ~5 do emulado.
+- Pendente: medir FPS no console pelo log (`logs/` ao lado do NRO, linhas `[native] last 10 s ... swaps`), consertar o brilho (T9), marco D (desempenho).
