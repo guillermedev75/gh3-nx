@@ -14,3 +14,10 @@
 # Encontradas em runtime ("Call to invalid or unregistered function"), chamadas indiretas.
 0x827C6618 = { name = "sub_827C6618" }  # chamada após o callback de áudio 0x827C46C8 (run4, 2026-10-17)
 0x826E00D8 = { name = "sub_826E00D8" }  # chamada indireta descoberta em runtime (run5, 2026-10-17)
+0x823D46A8 = { name = "sub_823D46A8" }  # chamada indireta descoberta em runtime (discover_functions.sh, 2026-10-17)
+0x826E3960 = { name = "sub_826E3960" }  # chamada indireta descoberta em runtime (discover_functions.sh, 2026-10-17)
+0x823D4698 = { name = "sub_823D4698" }  # chamada indireta descoberta em runtime (discover_functions.sh, 2026-10-17)
+0x821C4950 = { name = "sub_821C4950" }  # chamada indireta descoberta em runtime (discover_functions.sh, 2026-10-17)
+0x823C0608 = { name = "sub_823C0608" }  # chamada indireta descoberta em runtime (discover_functions.sh, 2026-10-17)
+0x821BCF20 = { name = "sub_821BCF20" }  # chamada indireta descoberta em runtime (discover_functions.sh, 2026-10-17)
+0x8236D050 = { name = "sub_8236D050" }  # chamada indireta descoberta em runtime (discover_functions.sh, 2026-10-17)
