@@ -15,6 +15,7 @@ deste repo que já resolve). Atualizar sempre que algo novo for identificado.
 | Cada rebuild leva 6–11 min | `<proj>_register.cpp` = 1 função com ~60 mil `SetFunction`; `-O1/-O0` não ajudam (medido) | `tools/split_register.py` como `POST_BUILD` do `<proj>_codegen` → **7,5 s** |
 | `-O0` num arquivo dá erro de PCH (`__OPTIMIZE__`) | flags por arquivo divergem do PCH | `SKIP_PRECOMPILE_HEADERS ON` no arquivo (ou não mexer em flags; preferir o split) |
 | Editar arquivo gerado some no build | o passo de codegen do build regenera quando o stamp não bate | alterar gerados só dentro do build (POST_BUILD) |
+| SDK pronto (zip 0.10.0) não tem camada Horizon/renderer nativo | as mudanças do project8-sw são patches sobre o código-fonte | `tools/setup_sdk.sh` → `sdk/` = `f5337cd` + 16 patches; `--check` compara a árvore exata. Ordem do README da série: aplicar com `--index` **antes** do `submodule update` (o 0002 move o gitlink do MoltenVK) |
 
 ## 2. Boot no Mac (GPU emulada)
 

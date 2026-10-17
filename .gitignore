@@ -8,3 +8,4 @@ tools/rexglue/
 .DS_Store
 .venv/
 __pycache__/
+sdk/
