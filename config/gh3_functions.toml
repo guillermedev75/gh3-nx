@@ -21,3 +21,4 @@
 0x823C0608 = { name = "sub_823C0608" }  # chamada indireta descoberta em runtime (discover_functions.sh, 2026-10-17)
 0x821BCF20 = { name = "sub_821BCF20" }  # chamada indireta descoberta em runtime (discover_functions.sh, 2026-10-17)
 0x8236D050 = { name = "sub_8236D050" }  # chamada indireta descoberta em runtime (discover_functions.sh, 2026-10-17)
+0x821E1B98 = { name = "sub_821E1B98" }  # chamada indireta descoberta em runtime (gameplay, ao iniciar música no Easy, 2026-10-17)
