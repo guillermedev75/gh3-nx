@@ -1,0 +1,9 @@
+extracted/
+generated/
+build/
+out/
+tools/rexglue/
+*.xex
+*.iso
+.DS_Store
+.venv/
