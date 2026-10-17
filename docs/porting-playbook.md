@@ -16,6 +16,8 @@ deste repo que já resolve). Atualizar sempre que algo novo for identificado.
 | `-O0` num arquivo dá erro de PCH (`__OPTIMIZE__`) | flags por arquivo divergem do PCH | `SKIP_PRECOMPILE_HEADERS ON` no arquivo (ou não mexer em flags; preferir o split) |
 | Editar arquivo gerado some no build | o passo de codegen do build regenera quando o stamp não bate | alterar gerados só dentro do build (POST_BUILD) |
 | SDK pronto (zip 0.10.0) não tem camada Horizon/renderer nativo | as mudanças do project8-sw são patches sobre o código-fonte | `tools/setup_sdk.sh` → `sdk/` = `f5337cd` + 16 patches; `--check` compara a árvore exata. Ordem do README da série: aplicar com `--index` **antes** do `submodule update` (o 0002 move o gitlink do MoltenVK) |
+| Checkout novo sem `generated/` não configura (o `CMakeLists.txt` inclui `generated/rexglue.cmake`, que só o codegen escreve) | o glue é saída do `rexglue codegen` | `tools/render_glue.py` escreve o glue do template do `sdk/`; o build roda o codegen (`<proj>_codegen`) e regenera; configurar de novo depois do codegen para entrar o `sources.cmake`. Tudo em `tools/build_host_sdk.sh` |
+| Build sobre o SDK patcheado | — | `tools/build_host_sdk.sh` → SDK em `out/sdk-install` (887 passos ninja), preset `mac-arm64-p8sdk`, `GH3_BUILD_DIR=out/build/mac-arm64-p8sdk ./run-gh3.command`. Codegen do rexglue patcheado: 291 arquivos em 53 s, 13 avisos `Unresolved` (desvios em 0x8211–0x8272), 59 575 endereços registrados; 300 quadros em ~13 s de boot (medido, 2026-10-17). O `cmake --install` do SDK registra `rexglue` no *user package registry* (`~/.cmake/packages/rexglue`) — um `find_package(rexglue)` sem `rexglue_DIR` pode cair nele |
 
 ## 2. Boot no Mac (GPU emulada)
 

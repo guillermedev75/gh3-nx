@@ -183,6 +183,15 @@
             "displayName": "macOS ARM64 RelWithDebInfo",
             "inherits": "mac-arm64-base",
             "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+        },
+        {
+            "name": "mac-arm64-p8sdk",
+            "displayName": "macOS ARM64 Release (SDK patcheado do project8-sw)",
+            "inherits": "mac-arm64-base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "rexglue_DIR": "${sourceDir}/out/sdk-install/lib/cmake/rexglue"
+            }
         }
     ],
     "buildPresets": [
@@ -203,6 +212,7 @@
         { "name": "mac-amd64-relwithdebinfo", "configurePreset": "mac-amd64-relwithdebinfo" },
         { "name": "mac-arm64-debug", "configurePreset": "mac-arm64-debug" },
         { "name": "mac-arm64-release", "configurePreset": "mac-arm64-release" },
-        { "name": "mac-arm64-relwithdebinfo", "configurePreset": "mac-arm64-relwithdebinfo" }
+        { "name": "mac-arm64-relwithdebinfo", "configurePreset": "mac-arm64-relwithdebinfo" },
+        { "name": "mac-arm64-p8sdk", "configurePreset": "mac-arm64-p8sdk" }
     ]
 }

@@ -17,7 +17,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [x] T1: SDK ReXGlue patcheado do código-fonte (série do project8-sw)
   aceite: .venv/bin/python -m pytest -q tests/test_setup_sdk.py && tools/setup_sdk.sh --check
   detalhe: plano detalhado, Task 1. Referência: ~/gh3-refs/project8-sw/docs/building.md §1
-- [ ] T2: GH3 no Mac compilado sobre o SDK patcheado (renderer emulado), 300 quadros
+- [x] T2: GH3 no Mac compilado sobre o SDK patcheado (renderer emulado), 300 quadros
   aceite: GH3_BUILD_DIR=out/build/mac-arm64-p8sdk python3 tools/boot_test.py --frames 300 --timeout 180
   detalhe: plano detalhado, Task 2
 - [ ] T3: renderer nativo do project8-sw no Mac (--gh3_renderer=native), 300 quadros
