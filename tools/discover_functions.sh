@@ -8,7 +8,7 @@ for i in $(seq 1 "$MAX"); do
   rm -f out/last-run.log
   ./run-gh3.command --log_level debug > out/discover-run.stdout 2>&1 & pid=$!
   for _ in $(seq 1 "$RUN_SECS"); do sleep 1; kill -0 $pid 2>/dev/null || break; done
-  kill $pid 2>/dev/null; pkill -f "mac-arm64-release/gh3" 2>/dev/null; sleep 1
+  pkill -P $pid 2>/dev/null; kill $pid 2>/dev/null; sleep 1  # só o jogo aberto pelo laço; não fecha o do usuário
   frames=$(grep -c "PRESENT" out/last-run.log 2>/dev/null || echo 0)
   addr=$(grep -oE "unregistered function at guest address 0x[0-9A-F]{8}" out/last-run.log | grep -oE "0x[0-9A-F]{8}" | head -1)
   if [ -z "$addr" ]; then
