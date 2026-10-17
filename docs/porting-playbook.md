@@ -42,6 +42,11 @@ Fluxo, do mais barato ao mais caro:
    ```
    Validação: das 10 funções achadas na marra, a varredura acha 9 (todas apontadas por ponteiro).
    No GH3: 106 candidatos → 15 falsos positivos removidos pelo `--prune` → 91 registrados.
+   **Não use `--all` em massa.** Registrar todos os buracos sem ponteiro (1226 no GH3) passou no build, mas o
+   boot caiu de ~3700 para 19 quadros em 60 s: cauda de função virando função separada muda o fluxo. Use os
+   buracos sem ponteiro só para conferir um endereço específico que caiu em runtime (ex.: 0x825E9670, que o jogo
+   monta com lis/addi — nenhum ponteiro na imagem) e registre só ele.
+   O `--prune` também tira candidatos que viram símbolo indefinido no link (ex.: dados no fim da seção de código).
 2. **Laço automático no boot**: `tools/discover_functions.sh` abre o jogo, registra o endereço que caiu,
    recompila e repete até rodar 60 s limpo. Também serve de teste de regressão do boot.
 3. **Manual (gameplay)**: o laço não passa do menu. Quando cair jogando, o endereço está em

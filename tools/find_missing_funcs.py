@@ -11,7 +11,7 @@ que ficam no buraco entre duas funções registradas: ninguém as chama diretame
 
 Uso:
   GH3_DUMP_IMAGE=out/image.bin ./run-gh3.command   # grava a imagem carregada (ver src/gh3_app.h)
-  python3 tools/find_missing_funcs.py out/image.bin [--toml]   # --toml imprime linhas para gh3_functions.toml
+  python3 tools/find_missing_funcs.py out/image.bin [--toml [--all]]   # --toml imprime linhas novas para gh3_functions.toml
   cmake --build ... > out/build.log; python3 tools/find_missing_funcs.py --prune out/build.log   # tira falsos positivos
 """
 import glob
@@ -70,6 +70,8 @@ def split_candidates(build_log: str, candidates) -> set:
     for t, f in re.findall(r"Unresolved conditional branch to 0x([0-9A-F]+) from 0x([0-9A-F]+)", build_log):
         lo, hi = sorted((int(t, 16), int(f, 16)))
         bad |= {c for c in candidates if lo < c <= hi}
+    # Candidato que o codegen não consegue gerar (ex.: dados no fim da seção de código) vira símbolo indefinido no link.
+    bad |= {int(a, 16) for a in re.findall(r'"_sub_([0-9A-F]{8})", referenced from', build_log)} & set(candidates)
     return bad
 
 
@@ -91,9 +93,13 @@ def main(argv):
     size = int(re.search(r"REX_CODE_SIZE (0x[0-9A-F]+)", pch).group(1), 16)
     cands = find_candidates(image, sizes, base + size)
     if "--toml" in argv:
+        # --all inclui buracos sem ponteiro na imagem: o jogo pode montar o endereço em runtime (lis/addi),
+        # como 0x825E9670 (carregamento de música). Falsos positivos que partem funções saem com --prune.
+        registered = set(re.findall(r"^0x([0-9A-F]{8}) =", open("config/gh3_functions.toml").read(), re.M))
         for addr, gap, ref in cands:
-            if ref:
-                print(f'0x{addr:08X} = {{ name = "sub_{addr:08X}" }}  # find_missing_funcs.py: buraco de {gap} bytes, referenciado por ponteiro')
+            if (ref or "--all" in argv) and f"{addr:08X}" not in registered:
+                how = "referenciado por ponteiro" if ref else "sem ponteiro na imagem"
+                print(f'0x{addr:08X} = {{ name = "sub_{addr:08X}" }}  # find_missing_funcs.py: buraco de {gap} bytes, {how}')
     else:
         print(f"{len(sizes)} funções; {len(cands)} buracos com código; {sum(r for *_, r in cands)} referenciados por ponteiro")
 

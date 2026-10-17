@@ -54,3 +54,9 @@ def test_split_candidates_flags_entries_inside_unresolved_branch():
     log = "Unresolved conditional branch to 0x820E23C8 from 0x820E2564\nUnresolved conditional branch to 0x82250FAC from 0x82250FC4\n"
     cands = [0x820E2540, 0x820E2600, 0x82250FB0, 0x82300000]
     assert split_candidates(log, cands) == {0x820E2540, 0x82250FB0}
+
+
+def test_split_candidates_flags_undefined_symbols_from_link():
+    from tools.find_missing_funcs import split_candidates
+    log = 'Undefined symbols for architecture arm64:\n  "_sub_828BA2AC", referenced from:\n'
+    assert split_candidates(log, [0x828BA2AC, 0x82000000]) == {0x828BA2AC}
