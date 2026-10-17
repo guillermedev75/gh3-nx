@@ -32,6 +32,15 @@ src/native/native_renderer.cpp, mudanças de 2026-10-17 (T7 do marco C)
   do SDK, com leitura de índices no vertex shader (src/native/native_primitive_expand.h).
   Com geometry shader (NVK no Switch) o caminho original não muda.
 
+src/rexglue_script_input.h e src/parity_capture.h
+  Do project8-sw (commit 3393f26): src/game/src/rexglue_script_input.h e
+  src/game/src/parity_capture.h. GPL-3.0-or-later.
+  Mudanças aqui: nomes dos dispositivos sintéticos (THP8 → GH3); na captura, o
+  índice de quadro padrão vira a contagem de linhas "XELOG_GPU PRESENT" reais
+  (src/present_counter.h, novo) em vez do contador de swap do THPS na memória do
+  guest, e os endereços de relógio do THPS (mark_clock_*, mark_frame_delta) passam
+  a 0 (desligados).
+
 O pacote do SD (tools/make_sd_package.sh) é só para uso pessoal: o NRO contém a
 tradução do executável do jogo (generated/) e não pode ser publicado.
 

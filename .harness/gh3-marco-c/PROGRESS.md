@@ -59,3 +59,11 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - 2026-10-17 09:19 T7 ✅ aceita (iter 3)
 - 2026-10-17 09:48 T8 ❌ tentativa 1: padrão proibido adicionado em teste: xit(
 - 2026-10-17 09:53 T8 ❌ tentativa 2: oráculo vermelho (.harness/gh3-marco-c/logs/oracle-1.log):
+
+### T8 — tentativa 1
+- feito: `src/rexglue_script_input.h` + `src/parity_capture.h` (project8-sw 3393f26, NOTICE) ligados no `gh3_app.h` (OnPreSetup/OnPostSetup/OnCreateDialogs/OnShutdown); `src/present_counter.h` + sink spdlog (OnPostInitLogging); `config/song_script.json`; `tools/gameplay_capture.py`, `tools/image_stats.py` (PNG por zlib, 5 filtros); `tests/test_gameplay_capture.py` (14, vermelhos antes). Sem dependência nova.
+- medido: aceite verde 2× (87 s por captura); quadro 2700 = gameplay Slow Ride/Medium, white=0,007/0,000, stddev 52/65. Suíte `pytest tests` 88 passed; boot nativo T7 de novo `OK: 604 quadros`, motivo 5 = 0.
+- decisões: GH3 não tem o contador de swap do THPS (0x82970A10) → `--parity_frame_counter=present` (padrão) conta as linhas `XELOG_GPU PRESENT` reais (exclui NULL/NO PRESENTER/FAILED), as mesmas do boot_test; exige `--log_level debug` (o gameplay_capture passa). `mark_clock_*` do THPS → 0.
+- decisões: roteiro = Start ×2 (pula vídeo live-action e animado; sem isso a abertura passa de 3000 quadros) + rota do Guillerme. Delays por capturas: Start do título → menu leva ~7 s (loading), daí 10 s. Linha do tempo (~34 qps, wall clock): título ~1440, menu ~1700, dificuldade/setlist ~1900–2200, palco ~2300, nota ~2400, música falha ~3200 (sem tocar). N=2700.
+- pendente: entrada é wall clock e o índice é quadro; máquina muito mais lenta/rápida pode deslocar a janela (margem ~±350 quadros). Headers não compilados no GCC do Switch (Docker). Sondas descartáveis em `out/t8/`.
+- 2026-10-17 16:54 T8 ✅ aceita (iter 1)
