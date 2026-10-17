@@ -10,3 +10,6 @@
 0x82360110 = { name = "sub_82360110" }  # alvo de b em 0x8222B9D8
 0x8279BC60 = { name = "sub_8279BC60" }  # alvo de b em 0x8279CAA4
 0x827A6758 = { name = "sub_827A6758" }  # alvo de b em 0x827A6B34
+
+# Encontradas em runtime ("Call to invalid or unregistered function"), chamadas indiretas.
+0x827C6618 = { name = "sub_827C6618" }  # chamada após o callback de áudio 0x827C46C8 (run4, 2026-10-17)

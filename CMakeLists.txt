@@ -21,4 +21,5 @@ else()
     add_executable(gh3 ${GH3_SOURCES})
 endif()
 
-rexglue_setup_target(gh3)
+rexglue_setup_target(gh3 GPU_PLUGINS xenos)
+
