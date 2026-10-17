@@ -32,3 +32,6 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [ ] T6: trava do default.xex e pacote do SD sem conteúdo do jogo
   aceite: .venv/bin/python -m pytest -q tests/test_sd_package.py && tools/check_no_game_content.sh
   detalhe: plano detalhado, Task 6
+- [ ] T7: renderer nativo no Mac sem geometry shaders (HUD, partículas): rect/quad/point lists expandidos sem GS
+  aceite: GH3_BUILD_DIR=out/build/mac-arm64-p8sdk python3 tools/boot_test.py --frames 600 --timeout 240 -- ./run-gh3.command --gh3_renderer=native --log_level debug && python3 tools/native_skips.py out/boot-test.log --reason 5 --max 0
+  detalhe: MoltenVK não tem geometryShader; src/native/native_renderer.cpp faz `if (geometry != kNone && !properties.geometryShader) return fail(5)` e pula ~58 mil draws (HUD some). Usar o caminho sem GS que o plugin xenos do SDK já tem ("primitive fallback conversion/expansion paths"; procurar em sdk/src/graphics/vulkan, ex. expandir rectangle/quad lists em índices de triângulos e point sprites no vertex shader). No Switch (NVK com GS) manter o GS. Escrever tools/native_skips.py (soma o último "[native] skipped by reason: R:N ..." por motivo; sai 1 se o motivo passar de --max) com teste em tests/test_native_skips.py.
