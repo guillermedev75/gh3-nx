@@ -67,3 +67,4 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - decisões: roteiro = Start ×2 (pula vídeo live-action e animado; sem isso a abertura passa de 3000 quadros) + rota do Guillerme. Delays por capturas: Start do título → menu leva ~7 s (loading), daí 10 s. Linha do tempo (~34 qps, wall clock): título ~1440, menu ~1700, dificuldade/setlist ~1900–2200, palco ~2300, nota ~2400, música falha ~3200 (sem tocar). N=2700.
 - pendente: entrada é wall clock e o índice é quadro; máquina muito mais lenta/rápida pode deslocar a janela (margem ~±350 quadros). Headers não compilados no GCC do Switch (Docker). Sondas descartáveis em `out/t8/`.
 - 2026-10-17 16:54 T8 ✅ aceita (iter 1)
+- 2026-10-17 17:54 T9 ❌ tentativa 1: sessão do claude travou: passou de 3600s sem terminar (ITER_TIMEOUT_SEC) e foi encerrada
