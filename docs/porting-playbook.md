@@ -49,10 +49,16 @@ Fluxo, do mais barato ao mais caro:
    O `--prune` também tira candidatos que viram símbolo indefinido no link (ex.: dados no fim da seção de código).
 2. **Laço automático no boot**: `tools/discover_functions.sh` abre o jogo, registra o endereço que caiu,
    recompila e repete até rodar 60 s limpo. Também serve de teste de regressão do boot.
-3. **Manual (gameplay)**: o laço não passa do menu. Quando cair jogando, o endereço está em
-   `out/last-run.log` (`grep "unregistered function"`); registrar e recompilar (~1 min).
+3. **Manual (gameplay)**: o laço não passa do menu. Quando cair jogando: `tools/fix_last_crash.sh` pega o
+   endereço em `out/last-run.log`, registra, recompila, roda o teste de boot e pronto (~2 min).
 
 ## 4. Medição
 
 - Contar quadros: `grep -c PRESENT out/last-run.log` com `--log_level debug`.
 - Toda mudança de build/boot entra no `registro-de-impacto` com antes/depois.
+
+## 5. Desempenho (ideias registradas)
+
+- Upscaling tipo DLSS/FSR (renderizar menor e ampliar) só ajuda se o gargalo for a GPU desenhando pixels. No Mac
+  com GPU emulada o custo principal tende a ser CPU (tradução de comandos Xenos → Vulkan → Metal); medir antes.
+- Geração de quadros (Lossless Scaling, FSR 3 FG) adiciona latência: fora para jogo de ritmo; opcional nos outros.

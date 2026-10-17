@@ -117,3 +117,4 @@
 0x827F62BC = { name = "sub_827F62BC" }  # find_missing_funcs.py: buraco de 84 bytes, referenciado por ponteiro
 
 0x825E9670 = { name = "sub_825E9670" }  # carregamento de música (endereço montado em runtime; sem ponteiro na imagem), 2026-10-17
+0x825E96B0 = { name = "sub_825E96B0" }  # queda jogando, 2026-10-17 (fix_last_crash.sh)
