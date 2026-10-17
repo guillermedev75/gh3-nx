@@ -40,9 +40,13 @@ GPL-3.0 (exigida por reaproveitar project8-sw / nfsmw-nx). Créditos explícitos
 | Marco | Entrega | Onde | Verificação |
 |---|---|---|---|
 | **A — Mac, GPU emulada** | Codegen do `default.xex` sem chamadas não resolvidas; binário macOS (arm64) que abre o jogo até o menu com o runtime do ReXGlue (Vulkan/MoltenVK) | Mac | Automática: codegen limpo, build, teste de boot que conta quadros apresentados |
-| **B — Mac, renderer nativo** | Renderer nativo portado do project8-sw substituindo a GPU emulada | Mac | Boot test + capturas comparadas à mão |
-| **C — Switch** | NRO (devkitA64 + libnx + NVK) que abre o jogo em title takeover | Switch | Build automático; execução manual no console |
+| **C — Switch + renderer nativo** | NRO (devkitA64 + libnx + NVK) que abre o jogo em title takeover, já com o renderer nativo portado do project8-sw (feito para o NVK do console) | Switch | Build automático; execução manual no console |
 | **D — Desempenho** | 60 FPS estáveis numa música, sem overclock; latência de áudio calibrável | Switch | Medido no console (Horizon OC Monitor), percentis de frame time |
+
+Decisão de 2026-10-17: o antigo marco B (renderer nativo no Mac) foi removido. O Mac fica só para validar a
+recompilação até o menu (marco A, mínimo); o renderer nativo é feito direto no Switch dentro do marco C, a
+partir do renderer do project8-sw, que já foi escrito para o NVK. Se o marco C travar por problemas que o Mac
+isolaria, o marco B volta.
 
 Cada marco ganha seu próprio plano depois do anterior. Este documento só detalha o marco A no plano
 `docs/superpowers/plans/2026-10-17-gh3-nx-marco-a-mac.md`.

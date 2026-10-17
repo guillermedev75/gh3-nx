@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Formato do harness: aceites binários na seção final.
 
-**Goal:** Recompilar o `default.xex` do Guitar Hero III (Xbox 360, USA Rev 1) com ReXGlue 0.10.0 e ter um binário macOS arm64 que abre o jogo até o menu, com um teste de boot automático.
+**Goal:** Recompilar o `default.xex` do Guitar Hero III (Xbox 360, USA Rev 1) com ReXGlue 0.10.0 e ter um binário macOS arm64 que abre o jogo até o menu, com um teste de boot automático. Marco mínimo: só prova que a recompilação está correta antes de ir para o Switch.
 
 **Architecture:** Ferramentas próprias em Python (verificação do XEX, codegen, teste de boot) testadas com pytest; o app é um projeto CMake sobre o ReXGlue SDK para macOS (runtime com GPU emulada via MoltenVK). Nada do jogo entra no git.
 
@@ -215,6 +215,5 @@ T0 no chat. Loop em `.harness/gh3-marco-a/PLAN.md`:
 
 ## Marcos seguintes (planos próprios, depois do A)
 
-- **B — renderer nativo no Mac:** portar o renderer de `R-drg/project8-sw` (`docs/native-renderer.md`), desligando a GPU emulada.
-- **C — Switch:** camada Horizon de `project8-sw/patches/rexglue-sdk/`, devkitA64 + libnx + NVK (`danfromtico/mesa-switch`), NRO em title takeover, espaço de endereço de 39 bits.
+- **C — Switch + renderer nativo:** camada Horizon de `project8-sw/patches/rexglue-sdk/`, devkitA64 + libnx + NVK (`danfromtico/mesa-switch`), NRO em title takeover, espaço de endereço de 39 bits, e o renderer nativo de `R-drg/project8-sw` (`docs/native-renderer.md`) portado direto para o console. (O antigo marco B no Mac foi removido em 2026-10-17; volta se o C travar.)
 - **D — desempenho:** escada do `nfsmw-nx/docs/performance-history.md` desde o primeiro dia; medir sem overclock; 60 FPS e percentis de frame time; áudio de baixa latência; cache de shaders completo na primeira execução.
