@@ -190,7 +190,8 @@
             "inherits": "mac-arm64-base",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "rexglue_DIR": "${sourceDir}/out/sdk-install/lib/cmake/rexglue"
+                "rexglue_DIR": "${sourceDir}/out/sdk-install/lib/cmake/rexglue",
+                "GH3_NATIVE_RENDERER": "ON"
             }
         }
     ],

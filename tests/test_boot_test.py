@@ -51,3 +51,17 @@ def test_fails_fast_on_fatal(tmp_path):
     """)
     r = run(tmp_path, cmd, frames=40, timeout=20)
     assert r.returncode == 1 and "0x82000000" in r.stdout
+
+
+def test_counts_native_renderer_presents(tmp_path):
+    # O renderer nativo (src/native/gh3_native_system.cpp) não passa pelo PRESENT do Xenos emulado;
+    # ele escreve a própria linha por swap, e o boot_test tem que contá-la.
+    cmd = fake_game(tmp_path, """
+        import sys, time
+        with open(sys.argv[1], "w") as f:
+            for i in range(50):
+                f.write("[debug] [gpu] XELOG_GPU PRESENT native\\n"); f.flush()
+            time.sleep(30)
+    """)
+    r = run(tmp_path, cmd, frames=40, timeout=10)
+    assert r.returncode == 0, r.stdout + r.stderr

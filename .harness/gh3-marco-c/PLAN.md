@@ -20,7 +20,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [x] T2: GH3 no Mac compilado sobre o SDK patcheado (renderer emulado), 300 quadros
   aceite: GH3_BUILD_DIR=out/build/mac-arm64-p8sdk python3 tools/boot_test.py --frames 300 --timeout 180
   detalhe: plano detalhado, Task 2
-- [ ] T3: renderer nativo do project8-sw no Mac (--gh3_renderer=native), 300 quadros
+- [x] T3: renderer nativo do project8-sw no Mac (--gh3_renderer=native), 300 quadros
   aceite: GH3_BUILD_DIR=out/build/mac-arm64-p8sdk python3 tools/boot_test.py --frames 300 --timeout 180 -- ./run-gh3.command --gh3_renderer=native --log_level debug
   detalhe: plano detalhado, Task 3. Referência: ~/gh3-refs/project8-sw/src/game/src/native/ e thps_p8_app.h
 - [ ] T4: toolchain Switch (Docker devkitA64) e driver NVK patcheado

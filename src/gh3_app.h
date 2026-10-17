@@ -7,6 +7,16 @@
 #include <rex/rex_app.h>
 #include <rex/runtime.h>
 
+#if GH3_NATIVE_RENDERER
+#include <rex/system/gpu_plugin.h>
+
+#include "native/gh3_native_system.h"
+
+// O plugin xenos compilado dentro do executável (CMakeLists.txt, gh3_gpu_xenos).
+extern "C" rex::system::IGraphicsSystem* rex_gpu_create(uint32_t abi_version,
+                                                         const rex::system::GpuCreateInfo* info);
+#endif
+
 #include <cstdlib>
 #include <fstream>
 
@@ -22,7 +32,21 @@ class Gh3App : public rex::ReXApp {
 
   // Override virtual hooks for customization:
   // void OnPostInitLogging() override {}
-  // void OnPreSetup(rex::RuntimeConfig& config) override {}
+#if GH3_NATIVE_RENDERER
+  // --gh3_renderer=native: o renderer nativo do project8-sw (src/native/) substitui a GPU emulada
+  // (Xenos) inteira. O padrão continua "xenos", criado pela cópia do plugin linkada no executável e não
+  // pelo .dylib (ver gh3_gpu_xenos no CMakeLists.txt).
+  void OnPreSetup(rex::RuntimeConfig& config) override {
+    if (gh3::native::Enabled()) {
+      config.graphics = gh3::native::CreateGraphicsSystem();
+    } else if (config.gpu_plugin == "xenos") {
+      rex::system::GpuCreateInfo info{};
+      info.struct_size = sizeof(info);
+      info.backend = "any";
+      config.graphics.reset(rex_gpu_create(rex::system::kGpuPluginAbiVersion, &info));
+    }
+  }
+#endif
   // void OnLoadXexImage(std::string& xex_image) override {}
   // GH3_DUMP_IMAGE=<arquivo>: grava a imagem já carregada (descriptografada) da memória do guest, para
   // tools/find_missing_funcs.py achar funções que a análise estática não registrou.

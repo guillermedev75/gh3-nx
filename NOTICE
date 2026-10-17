@@ -1,0 +1,20 @@
+NOTICE — gh3-nx
+
+Código de terceiros copiado para este repositório.
+
+src/native/ e src/guest_pacing_stats.h
+  Renderer nativo do project8-sw (R-drg/project8-sw, commit 3393f26, versão 1.0.0),
+  src/game/src/native/ e src/game/src/guest_pacing_stats.h. GPL-3.0-or-later.
+  O project8-sw o adaptou do renderer nativo do nfsmw-nx (StevensND/nfsmw-nx,
+  GPL-3.0). Partes de native_renderer.cpp portam o backend Vulkan do ReXGlue SDK
+  (Tom Clay, BSD-3-Clause), que deriva do Xenia (Ben Vanik e contribuidores do
+  Xenia, BSD-3-Clause).
+  Mudanças aqui: thps_ → gh3_ nos nomes públicos (arquivo do sistema, namespace,
+  cvars), categoria de cvar "THPS" → "GH3", e uma linha de log por quadro
+  apresentado ("XELOG_GPU PRESENT native") para o tools/boot_test.py.
+
+O texto da GPL-3.0 está em LICENSE.
+
+Este repositório não distribui imagem de disco, executável original nem arquivos
+do jogo. Guitar Hero III e marcas associadas pertencem aos seus donos, que não têm
+relação com este projeto.

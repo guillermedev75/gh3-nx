@@ -28,6 +28,7 @@ deste repo que já resolve). Atualizar sempre que algo novo for identificado.
 | Janela fica preta ao redimensionar | recriar o swapchain trava em `nextDrawable` (mesma causa do immediate); `host_present_from_non_ui_thread=true` não resolve (testado) | não redimensionar; correção real exige mexer no presenter do runtime |
 | Milhares de `primitive restart` no log | limitação do Metal | inofensivo até agora |
 | Teclado não controla | `mnk_mode` desligado por padrão | `--mnk_mode=true` + `--keybind_*` (ver `run-gh3.command`) |
+| Renderer nativo do project8-sw (`src/native/`) não linka no Mac: `RegisterFile`, `Shader::AnalyzeUcode`, `draw_util::*` indefinidos | no desktop o código de GPU do SDK fica no `librexgpu-xenos.dylib` com `CXX_VISIBILITY_PRESET hidden`; o project8-sw só compila o nativo no Switch, onde o plugin é estático | `GH3_NATIVE_RENDERER=ON` (preset `mac-arm64-p8sdk`) compila o plugin inteiro dentro do executável (`gh3_gpu_xenos`, como o SDK faz no Switch) e o `Gh3App` cria o xenos por `rex_gpu_create` em vez de abrir o .dylib, porque duas cópias registram os mesmos cvars e a 2ª é ignorada. `--gh3_renderer=native`: 300 quadros (`XELOG_GPU PRESENT native`) em < 180 s; GPU emulada no mesmo build continua passando (medido, 2026-10-17) |
 
 ## 3. Quedas `Call to invalid or unregistered function at guest address X`
 
