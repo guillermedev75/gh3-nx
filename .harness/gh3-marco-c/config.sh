@@ -17,7 +17,7 @@ HARNESS_MODEL=''         # vazio = modelo padrão do claude
 # Arquivos de teste (globs de nome de arquivo).
 TEST_GLOBS='*_test.go test_*.py *_test.py *.test.ts *.test.tsx *.test.js *.spec.ts *.spec.tsx *.spec.js'
 # Proibidos em linhas adicionadas a arquivos de teste (literais separados por |).
-SKIP_PATTERNS='t.Skip|.skip(|xit(|xdescribe(|.only(|@pytest.mark.skip|@unittest.skip'
+SKIP_PATTERNS='@pytest.mark.skip|@unittest.skip|pytest.skip(|@pytest.mark.xfail'  # projeto Python: 'xit(' casava com sys.exit( (2026-10-17)
 # Em teste existente, linha removida/alterada que case aqui = teste enfraquecido → rejeita.
 # Literais separados por |; prefixo ^ = começo da linha (ignorando indentação).
 PROTECTED_PATTERNS='^func Test|^func Benchmark|^def test|^async def test|^it(|^test(|^describe(|assert|expect(|t.Error|t.Fatal|t.Fail|require.|self.fail|pytest.raises|.should'
