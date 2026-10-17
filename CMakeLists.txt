@@ -23,3 +23,11 @@ endif()
 
 rexglue_setup_target(gh3 GPU_PLUGINS xenos)
 
+
+# O ReXGlue gera gh3_register.cpp como uma única função de ~60 mil registros (6 a 11+ min para compilar).
+# Repartir logo depois do codegen, dentro do build, porque o passo de codegen do build regenera o arquivo
+# quando ele foi alterado fora dele. Ver tools/split_register.py.
+add_custom_command(TARGET gh3_codegen POST_BUILD
+    COMMAND ${CMAKE_SOURCE_DIR}/.venv/bin/python ${CMAKE_SOURCE_DIR}/tools/split_register.py
+            ${CMAKE_SOURCE_DIR}/generated/default/gh3_register.cpp
+    VERBATIM)
