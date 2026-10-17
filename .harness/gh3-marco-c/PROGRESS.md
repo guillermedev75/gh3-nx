@@ -28,3 +28,11 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - pendente: conferência visual do menu e de uma música com `--gh3_renderer=native` (Step 4, Guillerme). O log mostra render targets e draws reais, mas não vi a imagem. FPS nativo × emulado não medido (a contagem de quadros não serve de métrica: o tempo inclui o boot).
 - 2026-10-17 06:13 T3 ✅ aceita (iter 3)
 - 2026-10-17 06:15 T4 ❌ tentativa 1: aceite vermelho: test -f out/driver-sdk/lib/libvulkan.a && nm out/driver-sdk/lib/libvulkan.a 2>/dev/null | grep -q vkCreateInstance
+
+### T4 — tentativa 2
+- feito: `docker/switch/Dockerfile` (cópia do project8-sw), `docker/switch/mesa-rust.Dockerfile`, `tools/build_mesa.sh` (build / `--check [--out DIR]` / `--list`), `tests/test_build_mesa.py` (3). Driver real em `out/driver-sdk/lib/`: `libvulkan.a` (2892 objetos AArch64, `T vkCreateInstance`) + `libnak_rs.a`. Aceite verde; suíte 34 passed. Playbook §1 com tempos (364 s com imagens em cache, medido).
+- decisões: a tentativa 1 não deixou registro; o daemon do Docker estava parado no início e subiu durante a sessão.
+- decisões: o `Docker.rust` do mesa-switch não traz o std de `aarch64-unknown-linux-gnu` em host amd64 (E0463 em `libcompiler.rlib`). Uma camada `rustup target add` por cima (`mesa-rust.Dockerfile`), sem mexer na série de patches. Nenhuma dependência nova no repo (imagens Docker são as do project8-sw).
+- decisões: `libvulkan.a` = MRI do `aarch64-none-elf-ar` juntando as 19 libs que o `build-switch-p8.sh` produz, menos `libnak_rs.a` (separada, como manda o building.md).
+- pendente: `vkCreateInstance`/`nvk_CreateInstance` aparecem 2× (o `libvulkan.a` do nouveau e o `libnvk.a` parecem ter os mesmos objetos). Conferir no link do T5; se der símbolo duplicado, tirar `libnvk.a` da lista. Rust nightly da imagem não é fixado (hoje: 1.101.0-nightly 2026-10-16), então builds futuros podem divergir.
+- 2026-10-17 06:47 T4 ✅ aceita (iter 5)
