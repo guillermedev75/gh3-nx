@@ -1,8 +1,8 @@
 # Resumo — .harness/gh3-marco-c
 
-- parada: **DONE**
-- iterações: 3
-- feitas: 7 · bloqueadas: 0 · pendentes: 0
+- parada: **CLAUDE_ERROR**
+- iterações: 2
+- feitas: 7 · bloqueadas: 0 · pendentes: 2
 
 ## Bloqueadas
 
@@ -10,6 +10,4 @@ nenhuma
 
 ## Commits desta execução
 
-- 7aebd17 harness(T7): renderer nativo no Mac sem geometry shaders (HUD, partículas): rect/quad/point lists expandidos sem GS
-- 75b20ec harness(T6): trava do default.xex e pacote do SD sem conteúdo do jogo
-- 4a7039e harness(T5): NRO do GH3 validado
+- b8d2b8f harness(T8): tentativa 2 falhou
