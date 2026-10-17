@@ -43,3 +43,10 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - decisões: `check_nro.py` com `from __future__ import annotations` porque o aceite usa o `python3` do sistema (3.9). Build no Docker com `-j 6` (Docker tem 7,7 GiB; o project8-sw fala em 16 GB). Nenhuma dependência nova.
 - pendente: o `vkCreateInstance` duplicado do T4 não quebrou o link (`--allow-multiple-definition`); só o console confirma. NRO não testado em hardware (H2/H3). Não há script `tools/build_nro.sh`; o comando docker está no playbook.
 - 2026-10-17 09:06 T5 ✅ aceita (iter 1)
+
+### T6 — tentativa 1
+- feito: `tools/gen_supported_dumps.py` (+`--check`) → `src/supported_dumps.h` (só SHA-256/tamanho/title id do `extracted/default.xex`, revisão via `check_xex.py`); `src/dump_gate.h` (do project8-sw) ligado em `Gh3App::OnConfigurePaths` (Switch: `game/` ao lado do NRO); `tools/check_no_game_content.sh [DIR]`, `tools/make_sd_package.sh`, `switch/gh3.toml`; testes `test_sd_package.py` (12) + `test_dump_gate.py` (3, compila a decisão com `c++`), vermelhos antes. NOTICE e playbook §1.
+- verificado: aceite verde; suíte 55 passed; build Mac recompilado: root com XEX falso/sem pasta → exit 3 com mensagem (sem core dump); `boot_test` nativo com o disco real `OK: 322 quadros`. `make_sd_package.sh` real → 3 arquivos em `out/sd/switch/gh3-nx/`, limpo.
+- decisões: `check_no_game_content.sh` reescrito sem `mapfile` (o `bash` do Mac é 3.2); pega também `*.xen` (assets do GH3) e cabeçalho `XEX2` por conteúdo; limite de 8 MB só no modo repo (o NRO tem 56 MB). `Classify` separada do `Enforce` (que usa `rex::crypto`) para testar sem SDK. `gh3.toml` com os valores de GPU do project8-sw (mesmo motor), sem os cvars `guest_*`/`switch_*` do THPS. Nenhuma dependência nova.
+- pendente: `build/switch/gh3.nro` é do T5 (sem a trava): rebuild Docker não feito; o ramo `__SWITCH__` do `OnConfigurePaths` não foi compilado. O `REXLOG` da trava sai antes do `InitLogging` (não aparece no log; só stderr). Custo do hash na partida não medido isoladamente.
+- 2026-10-17 09:13 T6 ✅ aceita (iter 2)

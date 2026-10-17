@@ -1,0 +1,23 @@
+# gh3-nx settings. This file sits next to gh3-nx.nro (the runtime reads <app>.toml beside the
+# executable). The game itself goes in game/, next to this file, from your own disc.
+#
+# Starting point, not yet tested on a Switch: the GPU values are the ones project8-sw shipped for
+# the same engine (Neversoft) on an OLED Switch in handheld mode. Change one at a time.
+
+# Draw with the port's own Vulkan renderer. "xenos" uses the SDK's emulated Xbox 360 GPU instead:
+# correct but far too slow to play (1-5 fps).
+gh3_renderer = "native"
+
+# One sample per pixel; true renders the game's multisampled targets with their samples.
+gh3_native_msaa = false
+# Upper bound on anisotropic texture filtering (1-16).
+gh3_native_max_anisotropy = 2
+# Depth in 32 bits per pixel instead of 64.
+gh3_native_depth24 = true
+# Make the draws' Vulkan calls on a second thread.
+gh3_native_record_thread = true
+# Log GPU time by render pass. For measuring only.
+gh3_native_gpu_profile = false
+
+# The log goes to logs/ next to the NRO.
+log_level = "info"

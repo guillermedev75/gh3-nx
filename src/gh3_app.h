@@ -4,8 +4,11 @@
 
 #pragma once
 
+#include <rex/filesystem.h>
 #include <rex/rex_app.h>
 #include <rex/runtime.h>
+
+#include "dump_gate.h"
 
 #if GH3_NATIVE_RENDERER
 #include <rex/system/gpu_plugin.h>
@@ -63,5 +66,15 @@ class Gh3App : public rex::ReXApp {
   // std::unique_ptr<rex::ui::AchievementNotificationDialog>
   // CreateAchievementNotificationDialog() override;
   // void OnShutdown() override {}
-  // void OnConfigurePaths(rex::PathConfig& paths) override {}
+  // Trava do default.xex (src/dump_gate.h): o último gancho antes do Runtime existir, então recusar
+  // aqui não deixa nada pela metade. Sem flag para desligar.
+  void OnConfigurePaths(rex::PathConfig& paths) override {
+#ifdef __SWITCH__
+    // O hbloader não passa argv; o disco extraído fica em game/ ao lado do NRO.
+    if (paths.game_data_root.empty()) {
+      paths.game_data_root = rex::filesystem::GetExecutableFolder() / "game";
+    }
+#endif
+    dump_gate::Enforce(paths.game_data_root);
+  }
 };

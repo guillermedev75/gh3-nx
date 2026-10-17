@@ -29,7 +29,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [x] T5: NRO do GH3 validado
   aceite: .venv/bin/python -m pytest -q tests/test_check_nro.py && python3 tools/check_nro.py build/switch/gh3.nro
   detalhe: plano detalhado, Task 5
-- [ ] T6: trava do default.xex e pacote do SD sem conteúdo do jogo
+- [x] T6: trava do default.xex e pacote do SD sem conteúdo do jogo
   aceite: .venv/bin/python -m pytest -q tests/test_sd_package.py && tools/check_no_game_content.sh
   detalhe: plano detalhado, Task 6
 - [ ] T7: renderer nativo no Mac sem geometry shaders (HUD, partículas): rect/quad/point lists expandidos sem GS
