@@ -180,7 +180,7 @@ if __name__ == "__main__":
 
 ### Task 5: Teste de boot automático
 
-**Files:** Create `src/frame_counter.cpp` (hook no ponto em que o runtime apresenta um quadro — o equivalente a `VdSwap`; localizar no SDK), `tools/boot_test.py`, `tests/test_boot_test.py`
+**Files:** `tools/boot_test.py`, `tests/test_boot_test.py`. **Desvio (2026-10-17):** em vez de hook em C++, conta as linhas `XELOG_GPU PRESENT` do log de debug do runtime (um por quadro) e falha cedo em `[FATAL]`. Resultado real: 303 quadros.
 
 **Interfaces:** o app grava `out/frames.txt` com o total de quadros apresentados a cada segundo. `boot_test.py --frames 300 --timeout 180` inicia o app, espera e sai 0 se `frames.txt` atingir o alvo antes do timeout; mata o app no fim.
 
@@ -199,15 +199,15 @@ if __name__ == "__main__":
 T0 no chat. Loop em `.harness/gh3-marco-a/PLAN.md`:
 
 ```
-- [ ] T1: check_xex — confirmar GH3 USA Rev 1 (plano: Task 1)
+- [x] T1: check_xex — confirmar GH3 USA Rev 1 (plano: Task 1)
   aceite: .venv/bin/python -m pytest -q tests/test_check_xex.py
-- [ ] T2: manifest e codegen ReXGlue 0.10.0 (plano: Task 2)
+- [x] T2: manifest e codegen ReXGlue 0.10.0 (plano: Task 2)
   aceite: .venv/bin/python -m pytest -q tests/test_codegen_report.py && test -f gh3_manifest.toml
-- [ ] T3: codegen sem chamadas não resolvidas (plano: Task 3)
+- [x] T3: codegen sem chamadas não resolvidas (plano: Task 3)
   aceite: python3 tools/check_xex.py extracted/default.xex && python3 tools/run_codegen.py
-- [ ] T4: app macOS compila (plano: Task 4)
+- [x] T4: app macOS compila (plano: Task 4)
   aceite: cmake --build build && test -x build/gh3
-- [ ] T5: teste de boot — 300 quadros (plano: Task 5)
+- [x] T5: teste de boot — 300 quadros (plano: Task 5)
   aceite: .venv/bin/python -m pytest -q tests/test_boot_test.py && python3 tools/boot_test.py --frames 300 --timeout 180
 ```
 

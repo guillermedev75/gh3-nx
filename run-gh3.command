@@ -6,7 +6,8 @@
 # são verde = LT, vermelho = LB, amarelo = RB, azul = RT, laranja = A (confirmado jogando, 2026-10-17).
 # 1-5 = trastes, setas = palhetada (D-pad), Espaço também = A (confirmar menu), Enter = Start, Tab = Back. Rebind no F4.
 cd "$(dirname "$0")"
-exec out/build/mac-arm64-release/gh3 --game_data_root="$PWD/extracted" --gpu_plugin xenos --log_file "$PWD/out/last-run.log" \
+LOG_FILE="${GH3_LOG_FILE:-$PWD/out/last-run.log}"
+exec out/build/mac-arm64-release/gh3 --game_data_root="$PWD/extracted" --gpu_plugin xenos --log_file "$LOG_FILE" \
   --fullscreen=false --window_width=1280 --window_height=720 \
   --vulkan_allow_present_mode_immediate=false --vulkan_allow_present_mode_mailbox=false \
   --mnk_mode=true --mnk_mouse=false \
