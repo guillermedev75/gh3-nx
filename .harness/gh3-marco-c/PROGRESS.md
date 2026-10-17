@@ -57,3 +57,4 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - decisões: `native_skips.py` soma TODAS as linhas "skipped by reason" (cada uma é delta de 10 s, então só a última subestimaria) e sai 1 se não houver nenhuma (corrida curta ou nativo não rodou). Com GS (`Choose` → `kGeometryShader`) o caminho é o de antes, então o Switch fica no GS. Strip e cópia de índices alocados por draw, sem cache (HUD tem poucos draws). Nenhuma dependência nova.
 - pendente: conferência visual do HUD/partículas no Mac (só log); NRO não recompilado (o ramo com GS não mudou, mas o header novo não passou pelo GCC do devkitA64). Motivo 7 (sem render target, ~25 mil/10 s) e 13 continuam — fora do T7.
 - 2026-10-17 09:19 T7 ✅ aceita (iter 3)
+- 2026-10-17 09:48 T8 ❌ tentativa 1: padrão proibido adicionado em teste: xit(
