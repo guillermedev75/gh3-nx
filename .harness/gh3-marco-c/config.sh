@@ -4,7 +4,7 @@ MAX_ITERS=24             # teto de iterações (cada uma = 1 sessão `claude -p`
 MAX_HOURS=14              # teto de tempo de parede
 MAX_ATTEMPTS=3           # falhas numa tarefa antes de marcá-la [!]
 NO_PROGRESS_LIMIT=5      # falhas seguidas (em qualquer tarefa) antes de parar tudo
-BUDGET_PER_ITER=5        # US$ máximo por iteração (--max-budget-usd)
+BUDGET_PER_ITER=50       # US$ máximo por iteração (--max-budget-usd)
 ITER_TIMEOUT_SEC=3600    # sessão que passar disso é encerrada e conta como tentativa falha (rede/Mac dormindo)
 # Permissões da sessão headless. acceptEdits = edita arquivos do repo sem perguntar; comando Bash só
 # roda se estiver em ALLOWED_TOOLS. NÃO use `auto` (no -p não há quem aprove: toda escrita é negada)
