@@ -27,3 +27,4 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - decisões: nenhum hook de endereço do THPS foi copiado (o `thps_p8_app.h` só serviu de referência para a troca de renderer). Nenhuma dependência nova (xxhash/glslang/SPIRV já vêm no `out/sdk-install`).
 - pendente: conferência visual do menu e de uma música com `--gh3_renderer=native` (Step 4, Guillerme). O log mostra render targets e draws reais, mas não vi a imagem. FPS nativo × emulado não medido (a contagem de quadros não serve de métrica: o tempo inclui o boot).
 - 2026-10-17 06:13 T3 ✅ aceita (iter 3)
+- 2026-10-17 06:15 T4 ❌ tentativa 1: aceite vermelho: test -f out/driver-sdk/lib/libvulkan.a && nm out/driver-sdk/lib/libvulkan.a 2>/dev/null | grep -q vkCreateInstance
