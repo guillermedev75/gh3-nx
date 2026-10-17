@@ -1,8 +1,12 @@
-"""Confere se um default.xex é o Guitar Hero III USA Rev 1 suportado por este port."""
+"""Confere se um default.xex é uma revisão do Guitar Hero III suportada por este port."""
 import struct
 import sys
 
-EXPECTED = {"title_id": 0x415607F7, "media_id": 0x43048167, "image_base": 0x82000000, "entry_point": 0x82136AC8}
+# Revisões conhecidas do GH3 de Xbox 360 (title id 0x415607F7). Cada uma tem endereços próprios no codegen.
+REVISIONS = {
+    "USA/Europa (disco multi 5 idiomas)": {"title_id": 0x415607F7, "media_id": 0x2C5FAD73, "image_base": 0x82000000, "entry_point": 0x82136950},
+    "USA Rev 1": {"title_id": 0x415607F7, "media_id": 0x43048167, "image_base": 0x82000000, "entry_point": 0x82136AC8},
+}
 
 
 def parse_xex(data: bytes) -> dict:
@@ -23,13 +27,22 @@ def parse_xex(data: bytes) -> dict:
     return info
 
 
+def identify(info: dict):
+    """Nome da revisão conhecida que bate com o cabeçalho, ou None."""
+    return next((name for name, exp in REVISIONS.items() if all(info.get(k) == v for k, v in exp.items())), None)
+
+
 def check_bytes(data: bytes) -> list:
+    """Lista de problemas; vazia quando o XEX é uma revisão suportada."""
     try:
         info = parse_xex(data)
     except ValueError as e:
         return [str(e)]
-    return [f"{k}: esperado 0x{v:08X}, encontrado 0x{info.get(k, 0):08X}"
-            for k, v in EXPECTED.items() if info.get(k) != v]
+    if identify(info):
+        return []
+    if info.get("title_id") != 0x415607F7:
+        return [f"title_id: 0x{info.get('title_id', 0):08X} não é o Guitar Hero III (0x415607F7)"]
+    return [f"revisão desconhecida do GH3: media_id 0x{info.get('media_id', 0):08X}, entry_point 0x{info.get('entry_point', 0):08X}"]
 
 
 def check(path) -> list:
@@ -39,5 +52,9 @@ def check(path) -> list:
 
 if __name__ == "__main__":
     problems = check(sys.argv[1])
-    print("OK: Guitar Hero III USA Rev 1" if not problems else "\n".join(problems))
+    if not problems:
+        with open(sys.argv[1], "rb") as f:
+            print("OK: Guitar Hero III —", identify(parse_xex(f.read(0x10000))))
+    else:
+        print("\n".join(problems))
     sys.exit(1 if problems else 0)

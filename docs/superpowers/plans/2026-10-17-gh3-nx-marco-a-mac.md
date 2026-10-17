@@ -14,7 +14,7 @@
 
 - Licença do repositório: GPL-3.0. Código de `luisxl15/Guitar-Hero-3-Recomp-` **não** é copiado (sem licença): só fatos públicos do executável (endereços, IDs).
 - `extracted/`, `generated/`, `build/`, `out/`, `tools/rexglue/` nunca entram no git.
-- Versão do jogo suportada: USA Rev 1, title id `0x415607F7`, media id `0x43048167`, base `0x82000000`, entry `0x82136AC8`.
+- Revisões do jogo: alvo principal "USA/Europa (disco multi 5 idiomas)" — title id `0x415607F7`, media id `0x2C5FAD73`, base `0x82000000`, entry `0x82136950` (a revisão do Guillerme); "USA Rev 1" (media `0x43048167`, entry `0x82136AC8`) é reconhecida pelo check mas não é o alvo do codegen.
 - Oráculo do projeto: `.venv/bin/python -m pytest -q tests`
 
 ---

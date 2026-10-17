@@ -7,3 +7,4 @@ tools/rexglue/
 *.iso
 .DS_Store
 .venv/
+__pycache__/

@@ -1,5 +1,5 @@
 import struct
-from tools.check_xex import parse_xex, check_bytes
+from tools.check_xex import parse_xex, check_bytes, identify
 
 def fake_xex(entry=0x82136AC8, base=0x82000000, title=0x415607F7, media=0x43048167):
     headers = [(0x00010100, entry), (0x00010201, base), (0x00040006, 0x100)]
@@ -24,3 +24,12 @@ def test_other_game_refused():
 
 def test_not_xex_refused():
     assert check_bytes(b"\x00" * 64) == ["não é um XEX2"]
+
+def test_multi5_revision_accepted_and_named():
+    data = fake_xex(entry=0x82136950, media=0x2C5FAD73)
+    assert check_bytes(data) == []
+    assert identify(parse_xex(data)) == "USA/Europa (disco multi 5 idiomas)"
+
+def test_unknown_gh3_revision_refused():
+    problems = check_bytes(fake_xex(media=0x11111111))
+    assert problems and "revisão desconhecida" in problems[0]
