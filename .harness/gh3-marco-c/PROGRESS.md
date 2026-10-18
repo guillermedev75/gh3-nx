@@ -110,3 +110,11 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - decisões: `gh3_native_msaa` agora `false` por padrão (o aceite só passa `as_samples=false`; com MSAA 4x de host não há alias e o palco sai branco; o Switch já usava false). A 1ª corrida do aceite "passou" por acaso (captura caiu em outra tela); a causa real do branco só aparece com a marca em gameplay.
 - pendente: ganho de GPU/ms no Switch não medido (NRO não recompilado); borda do palco em 1 amostra (sem amostras 2x2); se algum frame usar a 1x antes do 4x no mesmo quadro, o blit pode sobrescrever o conteúdo da 1x (não observado).
 - 2026-10-18 03:10 T15 ✅ aceita (iter 3)
+
+
+### T16 — tentativa 1
+- feito: (wip commitado em 2995901) cena 3D escalada: `src/native/native_scene_scale.h` (aritmética pura), `RenderTargetKey.scene_scaled` + `SyncSceneTarget` (blit LINEAR entre o alvo cheio 1280 e a imagem escalada), viewport/scissor escalados no `Draw`, cvar `gh3_native_scene_scale` (padrão 1.0; `switch/gh3.toml` 0.75), `tests/test_scene_scale.py` (9). Esta tentativa só rodou o aceite.
+- verificado: suíte 161 passed; captura 0,75 OK (white=0,014/0,001, stddev 54,5/50,2) e log "scene scale 0.75: 960x540" (alvos 960x768 cor / 960x996 depth). Cena estática (`--mark main_menu`): 0,75 vs 1,0 mean_diff=0,7 — a escala está correta e a HUD fica nítida.
+- decisões: o comparativo de gameplay **não é verificável como escrito**: a marca `gameplay` é wall-clock, mas o jogo anima por frame; a corrida 0,75 chega ao marco com 2578 presents e a referência com 2507 (71 frames a mais), caindo em trechos diferentes da música. Repetido 3× (mean_diff 51,4 / 37,4 / 51,9), inclusive com `gh3_min_frame_vblanks=2` nas duas (51,9) e contra a referência borrada em 0,75 (51,5). O limite 12 não é alcançável enquanto o marco não for preso ao tempo de música. Não editei a linha `aceite:` nem enfraqueci teste.
+- pendente: (a) prender a captura ao tempo de música (ou a um frame de jogo após o início da música) para o comparativo valer; (b) medir o ganho de GPU no Switch com `gh3_native_scene_scale=0.75`. A implementação está de pé; falta a verificação automática.
+- 2026-10-18 04:55 T16 [!] bloqueada (medição não determinística)
