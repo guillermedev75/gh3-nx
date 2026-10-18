@@ -81,6 +81,15 @@ Fluxo, do mais barato ao mais caro:
   N draws` (estimativa: não depende de o swap se repetir quando o jogo atrasa). `--min-vs base.json` sai 1 se
   `game_fps` cair mais de 5%. Linha de base (2026-10-17, Mac, nativo, 30 s): `out/perf/baseline.json` — game_fps
   53,0, swaps/s 46,5, 19386 draws/s, 7,0 ms de espera. Uma corrida leva ~2 min.
+- **Ruído do `game_fps` é grande** (mesmo build, 30 s): 55,6 / 56,8 / 64,8 / 66,2 / 69,1; as piores corridas foram logo
+  depois de compilar. Um `--min-vs` vermelho isolado não prova regressão: repetir após a máquina esfriar.
+- **Registradores como locais (T11)**: as opções do codegen (`ctr_as_local`, `xer_as_local`, `cr_as_local`,
+  `non_volatile_as_local`) valem no arquivo `includes` (`config/gh3_functions.toml`), no topo, antes de `[functions]`;
+  no manifesto são ignoradas. Ligadas ctr/xer/cr: `ctx.xer|ctr` 155854 → 0 nos `gh3_recomp.*.cpp`; gameplay ok;
+  game_fps 64,8–66,2 (baseline 66,4; sem ganho mensurável acima do ruído). `non_volatile_as_local = true` derruba o
+  jogo (`write of guest 0x00000084`, 16 PRESENT): funções partidas leem registradores antes de escrever; precisa do
+  `share_registers` + varredura "lê antes" do nfsmw (`tools/lee_antes.py`) antes de ligar. Rebuild: apagar
+  `cmake_pch.hxx.pch` antes, senão o PCH fica velho.
 
 ## 6. Revisão do marco C (2026-10-17)
 

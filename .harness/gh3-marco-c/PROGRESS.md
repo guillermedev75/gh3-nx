@@ -76,3 +76,10 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - pendente: 1 corrida só (variância entre corridas não medida); depende de wall clock do roteiro como o T8.
 - 2026-10-17 22:28 T10 ✅ aceita (iter 1)
 - 2026-10-17 22:56 T11 ❌ tentativa 1: aceite vermelho: python3 -c "import re,glob;n=sum(len(re.findall(r'ctx\.(xer|ctr)\b',open(f).read())) for f in glob.glob('generated/default/gh3_recomp.*.cpp'));print(n);assert n==0" && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-t11.png && python3 tools/image_stats.py out/parity/native-t11.png --max-white 0.15 --min-stddev 20 && python3 tools/gameplay_fps.py --renderer native --seconds 30 --out out/perf/t11.json --min-vs out/perf/baseline.json
+
+### T11 — tentativa 2
+- feito: `ctr/xer/cr_as_local = true` no topo de `config/gh3_functions.toml` (no manifesto as opções são ignoradas — foi o erro da tentativa 1: flags no manifesto não mudam nada). `ctx.xer|ctr` 155854 → 0. `tests/test_codegen_flags.py` (2). Suíte 109 passed. Playbook §5.
+- medido: mesmo build, game_fps 55,6 / 66,2 / 64,8 (baseline 66,4, limite 63,0); a falha da tentativa 1 (56,8) foi ruído, as piores corridas vêm logo após compilar. Sem ganho de FPS mensurável acima do ruído.
+- decisões: `non_volatile_as_local` fica false: true derruba o jogo (violação de acesso em 0x84, 16 PRESENT) — funções partidas leem registradores antes de escrever; exige portar `share_registers` + `lee_antes.py` do nfsmw (fora do escopo; ver playbook).
+- pendente: non_volatile_as_local; NRO do Switch não recompilado com os novos gerados.
+- 2026-10-17 23:20 T11 ✅ aceita (iter 3)

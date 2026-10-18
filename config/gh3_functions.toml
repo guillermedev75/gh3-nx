@@ -1,3 +1,9 @@
+# Registradores PowerPC como variáveis locais (T11). Opções do codegen valem neste arquivo (includes), não no manifesto.
+ctr_as_local = true
+xer_as_local = true
+cr_as_local = true
+non_volatile_as_local = false
+
 # Fronteiras de função que a análise do ReXGlue 0.10.0 não detectou sozinha (revisão multi 5 idiomas).
 # Origem: alvos de 'b' reportados como UnresolvedCall no codegen (out/codegen.stdout, 2026-10-17).
 [functions]
