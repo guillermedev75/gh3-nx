@@ -1,13 +1,12 @@
 # Resumo — .harness/gh3-marco-c
 
 - parada: **CLAUDE_ERROR**
-- iterações: 2
-- feitas: 7 · bloqueadas: 0 · pendentes: 2
+- iterações: 1
+- feitas: 11 · bloqueadas: 1 · pendentes: 3
 
 ## Bloqueadas
 
-nenhuma
+- T9: sessão do claude travou: passou de 3600s sem terminar (ITER_TIMEOUT_SEC) e foi encerrada
 
 ## Commits desta execução
 
-- b8d2b8f harness(T8): tentativa 2 falhou
