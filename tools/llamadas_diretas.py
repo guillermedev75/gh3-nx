@@ -19,7 +19,7 @@ import sys
 
 # Endereços com REX_HOOK_RAW em src/guest_waits.h. test_guest_waits.py confere que esta lista e os
 # kSwapCounter/kVblankCounter do header são os mesmos.
-HOOKED = {0x82172718, 0x82172758}
+HOOKED = {0x82172718, 0x82172758, 0x824CE958}
 
 CALL = re.compile(r"^(\s+)(sub_[0-9A-Fa-f]+)\(ctx, base\);", re.M)
 IMP = re.compile(r"^(\s+)__imp__(sub_[0-9A-Fa-f]+)\(ctx, base\);", re.M)

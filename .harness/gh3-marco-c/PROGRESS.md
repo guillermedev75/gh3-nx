@@ -126,3 +126,11 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - decisões: não implementar um anel no fallback só para o aceite: passaria o log "present ring: N slots" e não mudaria o jogo (regra do T18: não inventar gancho). Se houver serialização de present, ela está no presenter do SDK ou é o vsync; medir antes. Reescopo sugerido: instrumentar a espera de fence do presenter por quadro e, se confirmar serialização, um anel no guest output (patch no SDK).
 - pendente: aceite não rodado de propósito (o log não existe porque o anel não foi adicionado). Reescopo é outra tarefa.
 - 2026-10-18 04:59 T17 [!] bloqueada (premissa não se aplica ao gameplay)
+
+
+### T18 — tentativa 1
+- feito: gancho forte `sub_824CE958` (só no retorno do laço, `lr=0x824D0100`), com `kRingWait`/`kRingWaitLoopLr` e os offsets `[[device+10896]]` (leitura) e `[device+10908]` em `src/guest_waits.h`; o gancho chama o `__imp__`, lê a leitura do anel e dorme via `AfterRead` quando `r30` (posição pedida) ainda está à frente; `0x824CE958` entrou no `HOOKED` de `tools/llamadas_diretas.py` (10 chamadas voltaram a `sub_`); `Install` conta 3 e loga o endereço do anel; `tests/test_guest_waits.py` +1 (forma do laço no gerado).
+- verificado: aceite verde — `pytest tests/test_guest_waits.py` 19; suíte 162; captura nativa white=0,001 stddev=48,9; log "guest waits: installed 3 (swap 82172718, vblank 82172758, ring 824CE958), enabled=true". No gerado, o laço em `loc_824D00F8` compara `r30` com `[[r31+10896]]` e usa `[r31+10908]`; `r30` é não-volátil (o callee salva/restaura), então continua válido depois do original.
+- decisões: o gancho age só no `lr` do laço (as outras 10 chamadas vão direto ao `__imp__`); `AfterRead` reusa o detector por thread (dorme após N leituras iguais). Ganho esperado é CPU livre no Switch, não FPS (a GPU é o limite).
+- pendente: medir no Switch (CPU do thread de render / `guest waits: yields`).
+- 2026-10-18 05:05 T18 ✅ aceita

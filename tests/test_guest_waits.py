@@ -103,7 +103,8 @@ def test_hooked_addresses_match_the_header():
     text = (ROOT / "src" / "guest_waits.h").read_text()
     swap = int(re.search(r"kSwapCounter = 0x([0-9A-Fa-f]+)", text).group(1), 16)
     vblank = int(re.search(r"kVblankCounter = 0x([0-9A-Fa-f]+)", text).group(1), 16)
-    assert {swap, vblank} == HOOKED
+    ring = int(re.search(r"kRingWait = 0x([0-9A-Fa-f]+)", text).group(1), 16)
+    assert {swap, vblank, ring} == HOOKED
 
 
 def test_vblank_late_addresses_match_the_generated_loop():
@@ -124,6 +125,26 @@ def test_vblank_late_addresses_match_the_generated_loop():
     body = bodies[0]
     assert "ctx.lr = 0x822BF158;" in body and "ctx.lr = 0x822BF188;" in body
     assert "ld r11,30888(r31)" in body and "lis r31,-32065" in body
+
+
+def test_ring_wait_loop_shape():
+    text = (ROOT / "src" / "guest_waits.h").read_text()
+    lr = int(re.search(r"kRingWaitLoopLr = 0x([0-9A-Fa-f]+)", text).group(1), 16)
+    assert lr == 0x824D0100
+    assert "kDeviceReadPointer = 10896" in text
+    assert "kDeviceWrite = 10908" in text
+    body = None
+    for f in glob.glob(str(ROOT / "generated" / "default" / "gh3_recomp.*.cpp")):
+        t = Path(f).read_text()
+        if "DEFINE_REX_FUNC(sub_824D0070)" in t:
+            body = t
+            break
+    if body is None:
+        return  # checkout sem codegen
+    assert "ctx.lr = 0x824D0100;" in body
+    assert "REX_LOAD_U32(ctx.r31.u32 + 10896)" in body
+    assert "REX_LOAD_U32(ctx.r31.u32 + 10908)" in body
+    assert "goto loc_824D00F8" in body
 
 
 def _bodies():

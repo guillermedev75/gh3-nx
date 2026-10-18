@@ -79,6 +79,13 @@ inline constexpr uint32_t kVblankCounter = 0x82172758;
 inline constexpr uint32_t kVblankTarget = 0x82BF78A8;
 inline constexpr uint32_t kVblankLateReadLr = 0x822BF158;
 inline constexpr uint32_t kVblankLoopReadLr = 0x822BF188;
+// Fila de comandos da GPU (T18): sub_824D0070 espera a leitura alcancar a posicao pedida (r30)
+// antes de entregar o proximo pacote. O laco em 0x824D00F8 chama sub_824CE958 (o limitador de
+// 5000 us); o gancho so age nesse retorno e, se a leitura ainda nao passou r30, cede o nucleo.
+inline constexpr uint32_t kRingWait = 0x824CE958;
+inline constexpr uint32_t kRingWaitLoopLr = 0x824D0100;
+inline constexpr uint32_t kDeviceReadPointer = 10896;  // [device+10896] -> [ptr] = leitura
+inline constexpr uint32_t kDeviceWrite = 10908;
 
 // Parte pura em src/guest_waits_spin.h (SpinDetector).
 inline std::atomic<uint64_t> g_yields{0};
@@ -116,8 +123,9 @@ inline int Install(rex::Runtime* runtime) {
   int installed = 0;
   if (dispatcher && dispatcher->GetFunction(kSwapCounter)) ++installed;
   if (dispatcher && dispatcher->GetFunction(kVblankCounter)) ++installed;
-  REXLOG_INFO("guest waits: installed {} (swap {:08X}, vblank {:08X}), enabled={}",
-              installed, kSwapCounter, kVblankCounter, REXCVAR_GET(gh3_guest_waits));
+  if (dispatcher && dispatcher->GetFunction(kRingWait)) ++installed;
+  REXLOG_INFO("guest waits: installed {} (swap {:08X}, vblank {:08X}, ring {:08X}), enabled={}",
+              installed, kSwapCounter, kVblankCounter, kRingWait, REXCVAR_GET(gh3_guest_waits));
   return installed;
 }
 
@@ -127,10 +135,25 @@ inline int Install(rex::Runtime* runtime) {
 // podendo chamar o original.
 extern "C" void __imp__sub_82172718(PPCContext& ctx, uint8_t* base);
 extern "C" void __imp__sub_82172758(PPCContext& ctx, uint8_t* base);
+extern "C" void __imp__sub_824CE958(PPCContext& ctx, uint8_t* base);
 
 REX_HOOK_RAW(sub_82172718) {
   __imp__sub_82172718(ctx, base);
   gh3::guest_waits::AfterRead(ctx.r3.u64);
+}
+
+REX_HOOK_RAW(sub_824CE958) {
+  // r3 = contexto de submissao na pilha do guest; [r3] = device (o original le assim).
+  const uint32_t submit_context = ctx.r3.u32;
+  const bool ring_loop =
+      REXCVAR_GET(gh3_guest_waits) && ctx.lr == gh3::guest_waits::kRingWaitLoopLr;
+  __imp__sub_824CE958(ctx, base);
+  if (!ring_loop) return;
+  // r30 e' nao-volatil: o callee o salva/restaura, entao aqui ainda e' a posicao pedida.
+  const uint32_t device = REX_LOAD_U32(submit_context);
+  const uint32_t read_ptr = REX_LOAD_U32(device + gh3::guest_waits::kDeviceReadPointer);
+  const uint32_t read = REX_LOAD_U32(read_ptr);
+  if (ctx.r30.u32 > read) gh3::guest_waits::AfterRead(read);
 }
 
 REX_HOOK_RAW(sub_82172758) {

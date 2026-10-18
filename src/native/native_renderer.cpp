@@ -1685,6 +1685,9 @@ bool Renderer::Impl::Initialize() {
   }
   REXLOG_INFO("[native] Renderer ready: {} MB stream, {} shared memory binding(s)",
               kStreamSize >> 20, shared_binding_count);
+  // O anel de submissões que já existe (fence e pool por slot): documentado para o T20 e para
+  // comparar com quem achar que há um command buffer só.
+  REXLOG_INFO("[native] present ring: {} slots", kSubmissionSlots);
   return true;
 }
 
