@@ -52,3 +52,22 @@ def test_renderer_aliases_one_sample_msaa_surfaces_onto_the_1x_target():
     assert "alias_msaa" in src
     assert "uint64_t alias_seq" in src
     assert "alias_msaa = AliasMsaa(" in src
+
+
+def test_switch_performance_mode_skips_shadow_and_bloom_passes():
+    # Medido no Switch: limitado pela GPU; sem sombra e bloom, FPS 34 -> 45 e o branco do T9 some.
+    src = (ROOT / "src/native/native_renderer.cpp").read_text()
+    assert re.search(r"gh3_native_skip_shadows\).*base_tiles == 0 && c0->key\.pitch == 160", src)
+    assert re.search(r"gh3_native_skip_bloom\).*base_tiles == 1440 && c0->key\.pitch == 320", src)
+    # padrão desligado no código (Mac e testes de paridade), ligado só no pacote do Switch
+    assert 'REXCVAR_DEFINE_BOOL(gh3_native_skip_shadows, false' in src
+    assert 'REXCVAR_DEFINE_BOOL(gh3_native_skip_bloom, false' in src
+    toml = (ROOT / "switch/gh3.toml").read_text()
+    assert re.search(r"^gh3_native_skip_shadows = true$", toml, re.M)
+    assert re.search(r"^gh3_native_skip_bloom = true$", toml, re.M)
+
+
+def test_vblank_late_no_wait_is_off_everywhere():
+    # Medido no Switch sem ganho: os quadros lentos não são quantização de vblank.
+    assert "REXCVAR_DEFINE_BOOL(gh3_vblank_late_no_wait, true" not in (ROOT / "src/guest_waits.h").read_text()
+    assert re.search(r"^gh3_vblank_late_no_wait = false$", (ROOT / "switch/gh3.toml").read_text(), re.M)

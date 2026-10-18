@@ -25,6 +25,18 @@ gh3_native_gpu_profile = false
 # Cede o núcleo quando um thread do jogo gira no contador de quadro (src/guest_waits.h). Ligado por
 # padrão no Switch, onde o processo só tem 3 núcleos; false volta ao comportamento antigo para comparar.
 gh3_guest_waits = true
+# ZCULL (pixels escondidos pulados pela GPU). Exige o patch local do Mesa (patches/mesa-switch/
+# 0005-...) e loadOp=CLEAR no depth; medir no Switch antes de ligar por padrão.
+gh3_native_zcull = false
+# Pula a espera de vblank de um frame atrasado. Medido no Switch: sem ganho (os frames lentos do GH3
+# são 50-78 ms arbitrários, trabalho do próprio jogo, não múltiplos do tick de 16,7 ms). Fica desligado.
+gh3_vblank_late_no_wait = false
+# Modo desempenho: pula os passes do mapa de sombra e do bloom (src/native/native_renderer.cpp).
+# Medido no Switch (2026-10-18, clocks de fábrica): FPS mediano 34 -> 45, quadros >50 ms por 10 s
+# 46-108 -> 8; o jogo é limitado pela GPU. Sem o bloom some também o esbranquiçado da cena (o brilho
+# excessivo do T9 era o bloom). false volta os dois efeitos.
+gh3_native_skip_shadows = true
+gh3_native_skip_bloom = true
 # Loga a contagem de cedências a cada 4096. Diagnóstico.
 gh3_guest_waits_stats = false
 
