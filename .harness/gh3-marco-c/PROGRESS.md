@@ -90,3 +90,10 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - decisões: `__imp__` direto perde o ponto de gancho por nome `sub_*`; o GH3 não tem nenhum (src/ não define). LTO só no código traduzido + executável, SDK fora (memória do Docker 7,7 GiB). Nenhuma dependência nova.
 - pendente: `nm | grep " _start$"` = 0 não conferido; tempo do build Switch com LTO não cronometrado; ganho de FPS no Switch não medido (H2/H3).
 - 2026-10-18 00:20 T12 ✅ aceita à mão (Guillerme+Claude): a sessão terminou e ficou ociosa; trabalho recuperado do índice do git após reset por engano. Conferido: suíte 117, NRO LTO 00:12 válido, `_start` = 0; FPS Mac 64,0 (limite 63,0) e captura ok medidos pelo agente.
+
+### T13 — tentativa 1
+- feito: `src/guest_waits.h` (ganchos fortes `sub_82172718` swap / `sub_82172758` vblank: chamam o `__imp__` e, após N leituras idênticas no mesmo thread, dormem; cvars `gh3_guest_waits`, `_after`, `_us`, `_stats`; log "guest waits: installed N"), `src/guest_waits_spin.h` (detector puro), `tools/llamadas_diretas.py` com `HOOKED` (esses 2 endereços ficam fora da reescrita `__imp__`), `switch/gh3.toml`, `tests/test_guest_waits.py` (6). O trabalho já estava num commit wip da sessão anterior; esta tentativa só verificou.
+- verificado: suíte `pytest tests` 133 passed; captura nativa OK, white=0,001 stddev=56,7; log com "guest waits: installed 2 ... enabled=false"; gerado já sem `__imp__` nos 2 endereços (0 reescritos).
+- decisões: padrão desligado fora do Switch, ligado no Switch (regra da casa p/ patch de comportamento). Não consegui rodar `build_host_sdk.sh` (aprovação negada neste ambiente); o binário existente já continha o gancho (marcador no log).
+- pendente: ganho real (CPU do thread de render) só medível no Switch; no Mac o gancho fica desligado, então nada medido de FPS. O wip também trouxe `frame_stats.h` e mudanças em `native_renderer.cpp`/`AGENTS.md` fora do escopo estrito de T13.
+- 2026-10-18 02:37 T13 ✅ aceita (iter 1)

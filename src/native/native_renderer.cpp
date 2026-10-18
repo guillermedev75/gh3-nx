@@ -2490,6 +2490,9 @@ RenderTarget* Renderer::Impl::GetRenderTarget(const RenderTargetKey& key, uint32
   info.arrayLayers = 1;
   info.samples = rt->samples;
   info.tiling = VK_IMAGE_TILING_OPTIMAL;
+  // The depth keeps TRANSFER_SRC: the stencil-words resolve falls back to
+  // vkCmdCopyImageToBuffer. NVK therefore will not expose ZCULL for it until Mesa
+  // accepts TRANSFER_SRC in the ZCULL eligibility (see gh3_native_zcull).
   info.usage = (key.is_depth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
                                    VK_IMAGE_USAGE_SAMPLED_BIT
                              : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT) |
