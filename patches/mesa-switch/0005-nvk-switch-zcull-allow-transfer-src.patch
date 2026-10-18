@@ -1,0 +1,20 @@
+nvk/switch: allow TRANSFER_SRC in the ZCULL eligibility
+
+A depth image that is also read by a transfer (the stencil-words resolve
+uses vkCmdCopyImageToBuffer) was excluded from ZCULL only because of that
+read-only usage. TRANSFER_SRC never writes the image, so it cannot
+invalidate the ZCULL plane. With it allowed, the depth pass opened with
+loadOp=CLEAR (gh3_native_zcull) gets ZCULL on the Switch.
+
+--- a/src/nouveau/vulkan/nvk_image.c
++++ b/src/nouveau/vulkan/nvk_image.c
+@@ -1144,6 +1144,7 @@
+    zcull_layout = zcull_layout &&
+       nvk_switch_image_has_zcull_layout(image, &pdev->info.zcull_info);
+    image->zcull.transient_eligible = zcull_layout &&
+       !(image->vk.usage & ~(ZCULL_COMPATIBLE_IMAGE_USAGE |
+-                           VK_IMAGE_USAGE_TRANSFER_DST_BIT));
++                           VK_IMAGE_USAGE_TRANSFER_DST_BIT |
++                           VK_IMAGE_USAGE_TRANSFER_SRC_BIT));
+ #endif
+ 

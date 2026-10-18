@@ -61,15 +61,10 @@ REXCVAR_DEFINE_UINT32(gh3_guest_waits_after, 4, "GH3",
                       "Quantas leituras idênticas seguidas contam como giro");
 REXCVAR_DEFINE_UINT32(gh3_guest_waits_us, 100, "GH3",
                       "Microssegundos de sleep ao estabelecer o giro; 0 usa yield");
-#if defined(__SWITCH__)
-REXCVAR_DEFINE_BOOL(gh3_vblank_late_no_wait, true, "GH3",
-                    "Deixa um frame atrasado seguir na hora em vez de esperar o alvo+2 (dois ticks "
-                    "de 16,7 ms); frames no prazo continuam esperando");
-#else
 REXCVAR_DEFINE_BOOL(gh3_vblank_late_no_wait, false, "GH3",
                     "Deixa um frame atrasado seguir na hora em vez de esperar o alvo+2 (dois ticks "
-                    "de 16,7 ms); frames no prazo continuam esperando");
-#endif
+                    "de 16,7 ms). Sem ganho medido no GH3: os frames lentos sao do proprio jogo, "
+                    "nao da quantizacao de vblank");
 REXCVAR_DEFINE_BOOL(gh3_guest_waits_stats, false, "GH3",
                     "Loga a contagem de cedências a cada 4096");
 

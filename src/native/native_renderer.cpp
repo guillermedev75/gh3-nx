@@ -84,6 +84,12 @@ REXCVAR_DEFINE_BOOL(gh3_native_msaa_as_samples, true, "GH3",
                     "target that shares that EDRAM (4x at pitch P = 1x at pitch 2P), as the game "
                     "clears its targets; overrides gh3_native_msaa. Off: one sample per guest pixel "
                     "(gh3_native_msaa=false), a quarter of the pixels shaded");
+REXCVAR_DEFINE_BOOL(gh3_native_skip_shadows, false, "GH3",
+                    "Experimento de FPS: pula os draws do mapa de sombra (alvo cor base 0, pitch 160); "
+                    "a sombra fica com o conteudo do frame anterior");
+REXCVAR_DEFINE_BOOL(gh3_native_skip_bloom, false, "GH3",
+                    "Experimento de FPS: pula os draws do bloom (alvo cor base 1440, pitch 320); "
+                    "o brilho fica com o conteudo do frame anterior");
 REXCVAR_DEFINE_BOOL(gh3_native_zcull, false, "GH3",
                     "Clear the depth attachment on its first pass of the frame instead of loading it: "
                     "NVK only enables ZCULL (skip hidden pixels) when the depth loadOp is CLEAR");
@@ -3362,6 +3368,16 @@ void Renderer::Impl::Draw(const uint32_t* immediate_indices, uint32_t immediate_
   VulkanShader* vs = st.vs;
   VulkanShader* ps = st.ps;
   const PassTargets& targets = st.targets;
+  if (const RenderTarget* c0 = targets.color[0]) {
+    // Experimentos de corte de passe (o perfil mostrou ~5 ms cada): o alvo fica com o conteudo
+    // anterior, o que serve para medir o teto de GPU e para um modo de desempenho opcional.
+    if (REXCVAR_GET(gh3_native_skip_shadows) && c0->key.base_tiles == 0 && c0->key.pitch == 160) {
+      return skip(15);
+    }
+    if (REXCVAR_GET(gh3_native_skip_bloom) && c0->key.base_tiles == 1440 && c0->key.pitch == 320) {
+      return skip(15);
+    }
+  }
   const PipelineLayout* layout = st.layout;
 
   // Indices.

@@ -4,7 +4,9 @@ import subprocess
 def test_patches_are_listed_in_order():
     out = subprocess.run(["tools/build_mesa.sh", "--list"], capture_output=True, text=True, check=True).stdout.split()
     assert out[0] == "0001-nvk-switch-resolve-set-ubo-descriptors.patch"
-    assert out[-1] == "0004-switch-build-script.patch" and len(out) == 4
+    # série do project8-sw (0001-0004) e depois a local do GH3 (patches/mesa-switch, ZCULL)
+    assert out[3] == "0004-switch-build-script.patch"
+    assert out[4:] == ["0005-nvk-switch-zcull-allow-transfer-src.patch"]
 
 
 def test_check_rejects_missing_driver_sdk(tmp_path):

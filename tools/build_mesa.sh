@@ -20,6 +20,8 @@ if [ -z "${P8:-}" ]; then
   fi
 fi
 PATCHES="$P8/patches/mesa-switch"
+# Série do próprio GH3, aplicada depois da do project8-sw (idempotente).
+LOCAL_PATCHES="$PWD/patches/mesa-switch"
 MODE=build
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -31,7 +33,9 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-patches() { (cd "$PATCHES" && ls 0*.patch); }
+p8_patches() { (cd "$PATCHES" && ls 0*.patch); }
+local_patches() { (cd "$LOCAL_PATCHES" 2>/dev/null && ls 0*.patch); }
+patches() { p8_patches; local_patches; }
 
 check() {
   local a="$OUT/lib/libvulkan.a"
@@ -60,8 +64,15 @@ if [ ! -d "$MESA/.git" ]; then
 fi
 if [ ! -f "$MESA/build-switch-p8.sh" ]; then
   git -C "$MESA" checkout -q "$MESA_REV"
-  for p in $(patches); do git -C "$MESA" apply "$PATCHES/$p"; done
+  for p in $(p8_patches); do git -C "$MESA" apply "$PATCHES/$p"; done
 fi
+# Patches locais valem também num checkout já patcheado pela série do project8-sw.
+for p in $(local_patches); do
+  if git -C "$MESA" apply --check "$LOCAL_PATCHES/$p" 2>/dev/null; then
+    git -C "$MESA" apply "$LOCAL_PATCHES/$p"
+    echo "patch local: $p"
+  fi
+done
 
 # 3. Build: o script do patch 0004 usa a imagem devkitpro-mesa-rust-aarch64 se ela já existir.
 #    Ela é montada aqui (Docker.rust + std do alvo Rust, ver docker/switch/mesa-rust.Dockerfile).
