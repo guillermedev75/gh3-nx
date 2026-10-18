@@ -13,7 +13,7 @@ PERMISSION_MODE=acceptEdits
 ALLOWED_TOOLS='Bash(ls:*),Bash(mkdir:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git clone:*),Bash(git -C:*),Bash(git apply:*),Bash(git submodule:*),Bash(cmake:*),Bash(ninja:*),Bash(python3:*),Bash(.venv/bin/python:*),Bash(tools/*:*),Bash(./run-gh3.command:*),Bash(GH3_BUILD_DIR=*),Bash(docker:*),Bash(cp:*),Bash(mv:*),Bash(cat:*),Bash(grep:*),Bash(find:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(sed:*),Bash(nm:*),Bash(file:*),Bash(test:*),Bash(chmod:*),Bash(shasum:*),Bash(rm:*),Bash(touch:*),Bash(diff:*),Bash(sort:*),Bash(xxd:*),Bash(strings:*),Bash(bash:*),Bash(sh:*)'         # preenchido pelo harness-init conforme a stack; separado por vírgula
 # Negado sempre (deny vence allow): o runner é quem commita; worktree tira o trabalho do lugar.
 DISALLOWED_TOOLS='EnterWorktree,Bash(git commit:*),Bash(git push:*),Bash(git reset:*),Bash(git checkout:*),Bash(git switch:*),Bash(git rebase:*),Bash(git merge:*),Bash(git stash:*),Bash(git worktree:*)'
-HARNESS_MODEL=''         # vazio = modelo padrão do claude
+HARNESS_MODEL='claude-sonnet-5-5'         # vazio = modelo padrão do claude
 # Arquivos de teste (globs de nome de arquivo).
 TEST_GLOBS='*_test.go test_*.py *_test.py *.test.ts *.test.tsx *.test.js *.spec.ts *.spec.tsx *.spec.js'
 # Proibidos em linhas adicionadas a arquivos de teste (literais separados por |).
