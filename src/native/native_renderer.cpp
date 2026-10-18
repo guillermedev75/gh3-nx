@@ -59,6 +59,7 @@ extern "C" {
 
 #include "native_geometry_shaders.h"
 #include "native_edram_samples.h"
+#include "native_scene_scale.h"
 #include "native_primitive_expand.h"
 #include "native_hash.h"
 #include "native_textures.h"
@@ -84,6 +85,10 @@ REXCVAR_DEFINE_BOOL(gh3_native_msaa_as_samples, true, "GH3",
                     "target that shares that EDRAM (4x at pitch P = 1x at pitch 2P), as the game "
                     "clears its targets; overrides gh3_native_msaa. Off: one sample per guest pixel "
                     "(gh3_native_msaa=false), a quarter of the pixels shaded");
+REXCVAR_DEFINE_DOUBLE(gh3_native_scene_scale, 1.0, "GH3",
+                      "Escala (0.25-1) da cena 3D em relação à HUD: o alvo 1280x720 usado com profundidade é "
+                      "desenhado numa imagem de scale*1280 x scale*720 e sobe por blit linear quando a HUD "
+                      "(sem profundidade) ou um resolve o usa. 1.0 = desligado (T16)");
 REXCVAR_DEFINE_BOOL(gh3_native_skip_shadows, false, "GH3",
                     "Experimento de FPS: pula os draws do mapa de sombra (alvo cor base 0, pitch 160); "
                     "a sombra fica com o conteudo do frame anterior");
@@ -241,6 +246,8 @@ struct RenderTargetKey {
   // log2 of the guest sample count of a surface drawn with one sample whose EDRAM the 1x target at
   // pitch * scale shares (T15, AliasMsaa); 0 for every other target.
   uint32_t alias_msaa;
+  // T16: 1 = a imagem escalada da cena (scene_scale) do alvo 1280 de mesmos base/formato.
+  uint32_t scene_scaled;
   bool operator==(const RenderTargetKey& o) const { return !std::memcmp(this, &o, sizeof(o)); }
 };
 struct RenderTargetKeyHasher {
@@ -265,6 +272,11 @@ struct RenderTarget {
   // shares its EDRAM remembers the last one it was brought up to (synced_seq).
   uint64_t alias_seq = 0;
   uint64_t synced_seq = 0;
+  // T16 (par imagem cheia F / escalada S): S.scene_dirty = último desenho em S; F.scene_touch = último
+  // acesso a F (que pode escrevê-la); scene_seen = o que o outro lado já absorveu.
+  uint64_t scene_dirty = 0;
+  uint64_t scene_touch = 0;
+  uint64_t scene_seen = 0;
   uint64_t checked_clock = ~uint64_t(0);
 };
 
@@ -401,6 +413,10 @@ struct Renderer::Impl {
   // Multisampled surfaces as their samples (gh3_native_msaa_as_samples,
   // native_edram_samples.h): wins over multisample.
   bool msaa_as_samples = true;
+  // gh3_native_scene_scale já limitada; 1.0 = desligado (native_scene_scale.h).
+  float scene_scale = 1.0f;
+  bool scene_logged = false;
+  uint64_t scene_clock = 0;
   // gh3_native_alias_cap (ver o cvar).
   bool alias_cap = true;
   // gh3_native_zcull (ver o cvar).
@@ -630,6 +646,7 @@ struct Renderer::Impl {
     draw_util::ViewportInfo viewport = {};
     PassTargets targets;
     uint32_t needed_height = 0;
+    bool scene_scaled = false;  // T16: viewport/scissor/alvos na imagem escalada
     const PipelineLayout* layout = nullptr;
     uint32_t counts[4] = {};
     VkPipeline pipeline = VK_NULL_HANDLE;
@@ -1369,6 +1386,9 @@ struct Renderer::Impl {
   }
   uint64_t alias_clock = 0;
   void SyncAliasTarget(RenderTarget* target);
+  void SyncSceneTarget(RenderTarget* target);
+  void BlitTarget(RenderTarget* source, RenderTarget* target, int32_t src_w, int32_t src_h,
+                  int32_t dst_w, int32_t dst_h, VkFilter filter);
   void EndPass() {
     if (in_pass) {
       dfn().vkCmdEndRendering(cmd());
@@ -1414,6 +1434,7 @@ bool Renderer::Impl::Initialize() {
   specialize_signs = REXCVAR_GET(gpu_specialize_texture_signs);
   multisample = REXCVAR_GET(gh3_native_msaa);
   msaa_as_samples = REXCVAR_GET(gh3_native_msaa_as_samples);
+  scene_scale = scene::ClampScale(float(REXCVAR_GET(gh3_native_scene_scale)));
   alias_cap = REXCVAR_GET(gh3_native_alias_cap);
   zcull = REXCVAR_GET(gh3_native_zcull);
   ubo_alignment = std::max<VkDeviceSize>(properties.minUniformBufferOffsetAlignment, 16);
@@ -2496,6 +2517,7 @@ RenderTarget* Renderer::Impl::GetRenderTarget(const RenderTargetKey& key, uint32
   } else {
     SyncAliasTarget(target);
   }
+  SyncSceneTarget(target);
   return target;
 }
 
@@ -2520,47 +2542,98 @@ void Renderer::Impl::SyncAliasTarget(RenderTarget* target) {
         edram::AliasBlitExtent(guest_msaa, source->width, source->height, target->width, target->height);
     target->synced_seq = source->alias_seq;
     if (!extent.valid) continue;
-    BeginRecording();
-    EndPass();
-    VkCommandBuffer c = cmd();
-    VkMemoryBarrier before = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
-                              VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                                  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
-                                  VK_ACCESS_TRANSFER_WRITE_BIT,
-                              VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT};
-    dfn().vkCmdPipelineBarrier(c, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
-                               1, &before, 0, nullptr, 0, nullptr);
-    VkImageAspectFlags aspect =
-        target->key.is_depth ? (HasStencil(target->format)
-                                    ? VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT
-                                    : VkImageAspectFlags(VK_IMAGE_ASPECT_DEPTH_BIT))
-                             : VK_IMAGE_ASPECT_COLOR_BIT;
-    VkImageBlit blit = {};
-    blit.srcSubresource = {aspect, 0, 0, 1};
-    blit.dstSubresource = blit.srcSubresource;
-    blit.srcOffsets[1] = {int32_t(extent.src_w), int32_t(extent.src_h), 1};
-    blit.dstOffsets[1] = {int32_t(extent.dst_w), int32_t(extent.dst_h), 1};
-    vkCmdBlitImage(c, source->image, VK_IMAGE_LAYOUT_GENERAL, target->image,
-                   VK_IMAGE_LAYOUT_GENERAL, 1, &blit, VK_FILTER_NEAREST);
-    VkMemoryBarrier after = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT,
-                             VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
-                                 VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                                 VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
-                                 VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
-                                 VK_ACCESS_SHADER_READ_BIT};
-    dfn().vkCmdPipelineBarrier(c, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
-                               1, &after, 0, nullptr, 0, nullptr);
+    BlitTarget(source, target, int32_t(extent.src_w), int32_t(extent.src_h), int32_t(extent.dst_w),
+               int32_t(extent.dst_h), VK_FILTER_NEAREST);
+  }
+}
+
+// Blit da região (0,0)-(src_w,src_h) de source para (0,0)-(dst_w,dst_h) de target, com as barreiras de
+// quem escreveu antes e de quem lê depois (alias da T15 e imagem escalada da T16).
+void Renderer::Impl::BlitTarget(RenderTarget* source, RenderTarget* target, int32_t src_w,
+                                int32_t src_h, int32_t dst_w, int32_t dst_h, VkFilter filter) {
+  BeginRecording();
+  EndPass();
+  VkCommandBuffer c = cmd();
+  VkMemoryBarrier before = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
+                            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                                VK_ACCESS_TRANSFER_WRITE_BIT,
+                            VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT};
+  dfn().vkCmdPipelineBarrier(c, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                             1, &before, 0, nullptr, 0, nullptr);
+  VkImageAspectFlags aspect =
+      target->key.is_depth ? (HasStencil(target->format)
+                                  ? VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT
+                                  : VkImageAspectFlags(VK_IMAGE_ASPECT_DEPTH_BIT))
+                           : VK_IMAGE_ASPECT_COLOR_BIT;
+  VkImageBlit blit = {};
+  blit.srcSubresource = {aspect, 0, 0, 1};
+  blit.dstSubresource = blit.srcSubresource;
+  blit.srcOffsets[1] = {src_w, src_h, 1};
+  blit.dstOffsets[1] = {dst_w, dst_h, 1};
+  vkCmdBlitImage(c, source->image, VK_IMAGE_LAYOUT_GENERAL, target->image,
+                 VK_IMAGE_LAYOUT_GENERAL, 1, &blit, filter);
+  VkMemoryBarrier after = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT,
+                           VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                               VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                               VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                               VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                               VK_ACCESS_SHADER_READ_BIT};
+  dfn().vkCmdPipelineBarrier(c, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
+                             1, &after, 0, nullptr, 0, nullptr);
+}
+
+// T16: o par alvo cheio F / imagem escalada S da cena. F acessado (HUD, resolve, limpeza) traz antes o
+// que S desenhou desde então (blit para cima); S usada para desenhar traz antes o que F recebeu (blit
+// para baixo: a limpeza do palco, por exemplo). Cada lado só absorve o que o outro tem de novo.
+void Renderer::Impl::SyncSceneTarget(RenderTarget* target) {
+  if (!scene::Enabled(scene_scale) || target->key.alias_msaa || target->key.msaa ||
+      target->key.pitch != scene::kScenePitch) {
+    return;
+  }
+  const bool scaled = target->key.scene_scaled != 0;
+  RenderTargetKey other_key = target->key;
+  other_key.scene_scaled = scaled ? 0 : 1;
+  auto it = render_targets.find(other_key);
+  RenderTarget* other = it == render_targets.end() ? nullptr : it->second.get();
+  const VkFilter filter = target->key.is_depth ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
+  if (other) {
+    RenderTarget* full = scaled ? other : target;
+    RenderTarget* small = scaled ? target : other;
+    uint64_t newer = scaled ? full->scene_touch : small->scene_dirty;
+    if (newer > target->scene_seen) {
+      scene::SceneBlit e = scene::BlitExtent(scene_scale, small->width, small->height, full->width,
+                                             full->height);
+      target->scene_seen = newer;
+      if (e.valid) {
+        if (scaled) {
+          BlitTarget(full, small, int32_t(e.full_w), int32_t(e.full_h), int32_t(e.scaled_w),
+                     int32_t(e.scaled_h), filter);
+        } else {
+          BlitTarget(small, full, int32_t(e.scaled_w), int32_t(e.scaled_h), int32_t(e.full_w),
+                     int32_t(e.full_h), filter);
+        }
+      }
+    }
+  }
+  if (scaled) {
+    target->scene_dirty = ++scene_clock;
+  } else {
+    target->scene_touch = ++scene_clock;
   }
 }
 
 RenderTarget* Renderer::Impl::CreateOrGetRenderTarget(const RenderTargetKey& key, uint32_t min_height) {
   min_height = std::clamp(min_height, 16u, 2048u);
+  // T16: a imagem escalada da cena; min_height continua em pixels do jogo.
+  const bool scaled = key.scene_scaled && scene::Enabled(scene_scale);
   auto it = render_targets.find(key);
   RenderTarget* old = nullptr;
   if (it != render_targets.end()) {
     old = it->second.get();
     old->last_used_frame = frame;
-    if (old->height >= min_height) {
+    if (old->height >= (scaled ? scene::ScaledSize(scene_scale, rex::align(min_height, 16u))
+                               : min_height)) {
       return old;
     }
   }
@@ -2568,6 +2641,10 @@ RenderTarget* Renderer::Impl::CreateOrGetRenderTarget(const RenderTargetKey& key
   rt->key = key;
   rt->width = std::max(key.pitch, 1u);
   rt->height = rex::align(min_height, 16u);
+  if (scaled) {
+    rt->width = scene::ScaledSize(scene_scale, rt->width);
+    rt->height = scene::ScaledSize(scene_scale, rt->height);
+  }
   rt->samples = VkSampleCountFlagBits(1u << key.msaa);
   rt->format = key.is_depth ? DepthFormatFor(key.format)
                             : ColorFormatToVk(xenos::ColorRenderTargetFormat(key.format));
@@ -2575,6 +2652,9 @@ RenderTarget* Renderer::Impl::CreateOrGetRenderTarget(const RenderTargetKey& key
   if (old) {
     rt->alias_seq = old->alias_seq;
     rt->synced_seq = old->synced_seq;
+    rt->scene_dirty = old->scene_dirty;
+    rt->scene_touch = old->scene_touch;
+    rt->scene_seen = old->scene_seen;
   }
   VkImageCreateInfo info = {};
   info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -3079,7 +3159,10 @@ bool Renderer::Impl::BuildDrawSetup(uint32_t initiator_value) {
     needed_height =
         std::min(needed_height, st.viewport.xy_offset[1] + st.viewport.xy_extent[1]);
   }
-  st.needed_height = needed_height;
+  // T16: o alvo 1280 com profundidade vai para a imagem escalada (viewport/scissor escalados mais abaixo).
+  st.scene_scaled = scene::Enabled(scene_scale) &&
+                    scene::Qualifies(surface.pitch, depth_used, msaa, AliasMsaa(guest_msaa));
+  st.needed_height = st.scene_scaled ? scene::ScaledSize(scene_scale, needed_height) : needed_height;
   PassTargets& targets = st.targets;
   for (uint32_t i = 0; i < 4; ++i) {
     if (!((color_mask >> (4 * i)) & 0xF)) continue;
@@ -3090,6 +3173,7 @@ bool Renderer::Impl::BuildDrawSetup(uint32_t initiator_value) {
     key.format = uint32_t(color_info.color_format);
     key.msaa = msaa;
     key.alias_msaa = AliasMsaa(guest_msaa);
+    key.scene_scaled = st.scene_scaled;
     // The EDRAM below the base limits how tall the target can be.
     uint32_t pitch_tiles = (surface_info.surface_pitch * (guest_msaa >= 2 ? 2 : 1) + 79) / 80 *
                            (IsColorFormat64bpp(color_info.color_format) ? 2 : 1);
@@ -3114,6 +3198,7 @@ bool Renderer::Impl::BuildDrawSetup(uint32_t initiator_value) {
     key.format = uint32_t(depth_info.depth_format);
     key.msaa = msaa;
     key.alias_msaa = AliasMsaa(guest_msaa);
+    key.scene_scaled = st.scene_scaled;
     key.is_depth = 1;
     uint32_t pitch_tiles = (surface_info.surface_pitch * (guest_msaa >= 2 ? 2 : 1) + 79) / 80;
     uint32_t rows = pitch_tiles ? (2048 - std::min(key.base_tiles, 2047u)) / pitch_tiles *
@@ -3270,6 +3355,26 @@ bool Renderer::Impl::BuildDrawSetup(uint32_t initiator_value) {
     st.vp.y = -1.0f;
     st.vp.width = 1.0f;
     st.vp.height = 1.0f;
+  }
+  if (st.scene_scaled) {
+    if (st.viewport.xy_extent[0] && st.viewport.xy_extent[1]) {
+      st.vp.x *= scene_scale;
+      st.vp.y *= scene_scale;
+      st.vp.width *= scene_scale;
+      st.vp.height *= scene_scale;
+    }
+    for (int axis = 0; axis < 2; ++axis) {
+      scene::ScaledSpan span =
+          scene::ScaleSpan(scene_scale, st.scissor.offset[axis], st.scissor.extent[axis]);
+      st.scissor.offset[axis] = span.offset;
+      st.scissor.extent[axis] = span.extent;
+    }
+    if (!scene_logged) {
+      scene_logged = true;
+      REXLOG_INFO("[native] scene scale {:g}: {}x{}", scene_scale,
+                  scene::ScaledSize(scene_scale, scene::kScenePitch),
+                  scene::ScaledSize(scene_scale, 720));
+    }
   }
   st.vp.minDepth = st.viewport.z_min;
   st.vp.maxDepth = st.viewport.z_max;
@@ -3891,7 +3996,13 @@ void Renderer::Impl::Draw(const uint32_t* immediate_indices, uint32_t immediate_
     last_system = {submission_number, 0, nullptr, frame, system_offset};
   }
 
-  // T15: a cached setup does not go through GetRenderTarget again.
+  // T15/T16: a cached setup does not go through GetRenderTarget again.
+  if (scene::Enabled(scene_scale)) {
+    for (RenderTarget* t : {targets.color[0], targets.color[1], targets.color[2], targets.color[3],
+                            targets.depth}) {
+      if (t) SyncSceneTarget(t);
+    }
+  }
   if (!msaa_as_samples && !multisample) {
     for (RenderTarget* t : {targets.color[0], targets.color[1], targets.color[2], targets.color[3],
                             targets.depth}) {
