@@ -4,6 +4,10 @@ Port não oficial de Guitar Hero III (Xbox 360) para Nintendo Switch por **recom
 PowerPC → C++ → ARM64) com renderer Vulkan nativo (project8-sw / NVK). Código, comentários, docs e commits
 em **português**.
 
+
+> **Continuando a fila de otimizações?** Leia `.harness/gh3-marco-c/HANDOFF.md` primeiro (estado, regras do
+> harness sem o runner, comandos e armadilhas).
+
 ## Dados do jogo — nunca commitar
 
 - `extracted/` (disco), `generated/` (C++ derivado do `default.xex`) e `sdk/` são **gitignored** e exigem o
