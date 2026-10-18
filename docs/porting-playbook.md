@@ -1,6 +1,6 @@
 ---
 created: 2026-10-17
-updated: 2026-10-17
+updated: 2026-10-18
 ---
 
 # Playbook de port 360 → (Mac | Switch) com ReXGlue
@@ -134,3 +134,49 @@ App no Switch: título "Guitar Hero III: Legends of Rock"; ícone recortado do m
   desligado não há alias e o palco sai branco). Sombra do palco fica em 640x360 de sombreamento, com
   bordas em 1 amostra (sem a grade 2x2 de amostras do guest).
 - `gameplay_capture.py`/`gameplay_fps.py` aceitam cvars extras depois de `--` (`-- --cvar=valor`).
+
+## 8. Diagnóstico no Switch: o gargalo é a GPU (2026-10-18)
+
+Medido no aparelho (Mariko, portátil, CPU 1020 MHz / GPU 460,8 MHz / RAM 1331 MHz), logs puxados pelo FTP do
+DBI (`ftp://<ip>:5000/switch/gh3-nx/logs/`): `gh3_NNN.log` (renderer) e `rex/rex_perfil.log` (profiler do SDK
+do project8-sw: FPS a cada 10 s, CPU por thread com amostragem de pilha, chamadas libnx, relógios).
+
+| Mudança | FPS mediano do jogo | Renderer CPU / GPU por quadro (gameplay) | Veredito |
+|---|---|---|---|
+| base (T13+T14) | ~34 | 21–39 / 17–29 ms | — |
+| PGO (`GH3_PGO=gerar` → jogar → `usar`) | ~31 | ~25 / ~21 ms | sem ganho visível (o gargalo não é CPU) |
+| ZCULL (`gh3_native_zcull` + patch Mesa 0005) | ~22 | 33–41 / 25–30 ms | pior ou ruído; desligado |
+| `gh3_vblank_late_no_wait` | — | — | sem ganho (quadros lentos não são quantização de vblank); desligado |
+| **sem sombra e bloom** (`gh3_native_skip_shadows/bloom`) | **~45** | **13 / 13 ms**; quadros >50 ms por 10 s 46–108 → 8 | **ligado no `switch/gh3.toml`** |
+
+Como ler o profiler sem se enganar:
+- O "CPU %" por thread conta amostras paradas em syscall de espera. Simbolizado, quase todo o topo era
+  `svcSleepThread`, `svcWaitProcessWideKeyAtomic`, `svcWaitSynchronization`, não código do jogo. Os threads
+  estão **esperando**, não calculando. As funções do jogo mais quentes (`sub_824D0070`, `sub_8272C7C0`) ficam em
+  ~13–18% de um núcleo.
+- `fences esperadas (… ms)` por segundo é o sinal de GPU: 505–656 ms/s na base, 341 ms/s sem sombra e bloom.
+- "renderer CPU" do `gh3_*.log` inclui espera; ele caiu junto com a GPU quando só passes de GPU foram cortados.
+- Sinais externos que batem: o OC de **GPU** melhora até a intro, que é leve (3,6 ms de CPU e 5,7 ms de GPU por
+  quadro).
+- Para simbolizar, **guarde o ELF de cada NRO testado** (`build/switch/gh3` → `out/elf/gh3-<sha>.elf`; o NRO
+  não tem símbolos). Offsets `imagen+0x…` = endereço no ELF; `llvm-nm -n` + bisect. Com ELF de outro build os
+  nomes saem errados (aparecem `tmemCreate`/`ProfilerMain` em thread do jogo).
+- Compare corridas na **mesma música e no mesmo trecho**: dentro de uma corrida o FPS de 10 s varia de 19 a 49.
+
+GPU por passe (`gh3_native_gpu_profile=true`, ms por quadro): passe principal 720p cor+profundidade 7–11 ms,
+segundo passe 720p 3–5 ms, resolves ~1,5–2 ms; sombra e bloom juntos ~5–10 ms (pelo ganho do corte).
+
+O esbranquiçado da cena no renderer nativo (T9, bloqueado) **some sem o bloom**: o passe de bloom (alvo base 1440,
+pitch 320, 320x184) é o que clareava demais. Consertar o bloom é opcional; o modo desempenho já resolve.
+
+Outras peças desta fase:
+- T13 `src/guest_waits.h`: esperas no contador de swap/vblank dormem após N leituras iguais (só no Switch).
+- T14 `src/switch_apm.h`: `apm performance configuration 0x92220008 (anterior 0x00020003)` confirmado no log.
+- PGO `src/pgo.cpp` + `cmake/switch.cmake` (do nfsmw-nx): o build de gravação desvia os `.gcda` para
+  `sdmc:/switch/gh3-nx/pgo/` com `--wrap=fopen` e grava a cada 30 s; `-fno-profile-values` porque o perfil de
+  chamadas indiretas lê `tpidr_el0`, que é 0 no Horizon. Os perfis ficam em `out/pgo/` (fora do git).
+- Overlay de FPS do SDK: `src/frame_stats.h` registra o provider; F3 no Mac, L+R+Cima no Switch.
+
+Lição de processo: **dois agentes na mesma worktree se misturam.** O OpenCode/DeepSeek trabalhou em paralelo ao
+harness, e o `git add -A` do harness levou o trabalho dele para dentro dos commits T13/T14/T15 (PGO no commit do
+T14, `vblank_late_no_wait` no do T15). Um agente por worktree; o outro usa a sua.

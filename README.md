@@ -19,18 +19,23 @@ change is tested first.
 |---|---|
 | **A — macOS, emulated GPU** | ✅ boots, plays full songs with correct audio (~5 FPS) |
 | **C — Switch + native renderer** | ✅ boots in title takeover, plays full songs, HUD and 3D stage correct |
-| **D — Performance** | 🔄 in progress (see below) |
+| **D — Performance** | 🔄 in progress: ~45 FPS at stock clocks on Switch, 60 is the goal |
 
-Measured on 2026-10-17:
+Measured on 2026-10-17/18:
 
 | Platform | Renderer | Gameplay |
 |---|---|---|
 | macOS (M1 Pro) | emulated Xenos GPU | ~5 FPS (reported) |
 | macOS (M1 Pro) | **native** | **38–53 swaps/s** (measured from the renderer log) |
-| Switch (Mariko, stock clocks, handheld) | native | ~27–35 swaps/s, below 20 game FPS felt; playable with OC |
+| Switch (Mariko, stock clocks, handheld) | native, full effects | ~34 game FPS (median), frequent >50 ms frames |
+| Switch (Mariko, stock clocks, handheld) | native, **performance mode** (default) | **~45 game FPS** (median), >50 ms frames 46–108 → 8 per 10 s |
 
-Known issues: the native renderer draws the scene **brighter** than the Xbox 360; resizing the macOS window turns
-it black (MoltenVK drawable stall).
+On the Switch the game is **GPU-bound**. The default `gh3.toml` turns on a performance mode that skips the shadow-map
+and bloom passes (`gh3_native_skip_shadows`, `gh3_native_skip_bloom`); this also removes the over-bright look the
+native renderer had. Set both to `false` to get the effects back. Next steps (3D at a lower resolution than the
+HUD, overlapped present) are in [`docs/porting-playbook.md`](docs/porting-playbook.md) §8.
+
+Known issues: resizing the macOS window turns it black (MoltenVK drawable stall).
 
 ## How it was built — in one day, with an agent harness
 
@@ -49,6 +54,9 @@ make the next 360 → Switch port faster. Highlights:
 - **White 3D stage** fixed: the game draws its 4× MSAA stage into EDRAM that it then reuses as a 1× target of twice
   the pitch; the native renderer now draws the samples into that shared target.
 - **Scripted input + frame capture** reach gameplay unattended and compare native vs emulated frames.
+- **Switch profiling over FTP**: the SDK profiler plus symbolized stack samples showed the threads mostly *waiting*
+  on the GPU, not computing — so PGO and codegen tweaks gave nothing measurable, while cutting two GPU passes gave
+  +32% FPS.
 
 ## Building
 

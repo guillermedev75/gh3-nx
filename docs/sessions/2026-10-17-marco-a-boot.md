@@ -46,3 +46,18 @@ Estado: o `default.xex` (USA/Europa multi 5) recompilado roda no macOS arm64 com
 - Harness trocado para Sonnet 5.5 para economizar cota.
 - App renomeado para "Guitar Hero III: Legends of Rock" com ícone do próprio jogo (gerado localmente).
 - Repositório público no GitHub criado (só código GPL; checagem de conteúdo antes do push).
+
+## Marco D, madrugada de 18 — diagnóstico no Switch
+
+- Harness: T13 (esperas dormem), T14 (GPU 460,8 MHz, confirmado no log do aparelho) e T15 (palco 1 amostra) ✅.
+  Pausas por limite de uso do Claude; nesse intervalo o Guillerme tocou o projeto no OpenCode com DeepSeek **na
+  mesma worktree**, e o trabalho dele (PGO, overlay de FPS, `vblank_late_no_wait`, ZCULL) entrou de carona nos
+  commits do harness. Os experimentos restantes foram commitados à parte com a origem escrita (`df57e51`).
+- DeepSeek mediu no Switch: PGO, ZCULL e `vblank_late_no_wait` sem ganho. O corte de sombra + bloom deu FPS
+  mediano **34 → 45** nos clocks de fábrica (quadros >50 ms por 10 s: 46–108 → 8).
+- Perfil simbolizado (ELF guardado do mesmo NRO): threads majoritariamente **esperando** em syscall; o jogo é
+  limitado pela **GPU**, não pela CPU — por isso PGO/T11/T12 não aparecem. Detalhes no playbook §8.
+- Sem o bloom some o esbranquiçado (T9). O Guillerme aprovou o visual: modo desempenho ligado por padrão no
+  `switch/gh3.toml` (`053423d`).
+- Próxima fila (pedida pelo Guillerme, itens 3–5): 3D em resolução menor que a HUD; apresentação sem esperar a GPU
+  (command buffers em rodízio); funções quentes do jogo em C++ nativo.
