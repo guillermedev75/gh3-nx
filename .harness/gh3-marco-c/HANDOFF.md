@@ -8,7 +8,7 @@ Para quem continua a fila sem o runner do Claude (ex.: OpenCode + DeepSeek). Lei
 - Worktree `~/gh3-nx-wt/marco-c`, branch `harness/gh3-marco-c`. `main` (em `~/gh3-nx`) e o GitHub
   (github.com/guillermedev75/gh3-nx, público) estão no mesmo commit que a branch, incluindo o wip do T16.
   Publicar: `git -C ~/gh3-nx merge --ff-only harness/gh3-marco-c && git -C ~/gh3-nx push origin main`.
-- Suíte: `.venv/bin/python -m pytest -q tests` → 161 passed.
+- Suíte: `.venv/bin/python -m pytest -q tests` → 162 passed.
 - Runner do Claude **parado** (cota). Ninguém mais está mexendo na worktree.
 - **No Switch o jogo é limitado pela GPU** (playbook §8). Modo desempenho (sem sombra e bloom) ligado no
   `switch/gh3.toml`: FPS mediano ~34 → ~45 nos clocks de fábrica. Otimizar CPU do jogo não sobe FPS até a GPU
@@ -18,15 +18,24 @@ Para quem continua a fila sem o runner do Claude (ex.: OpenCode + DeepSeek). Lei
 
 | Tarefa | Estado | Nota |
 |---|---|---|
-| T16 cena 3D escalada (`gh3_native_scene_scale`) | **wip commitado** (`wip(T16)`), suíte verde, aceite com captura **ainda não rodado** | começar rodando o `aceite:` do T16 e corrigir o que falhar |
-| T17 present em anel (3 command buffers) | pendente | `src/native/gh3_native_system.cpp` ~1278 |
-| T18 `sub_824D0070` cede o núcleo | pendente | se não for espera, bloquear, não inventar gancho |
-| T19 `sub_8272C7C0` nativo com verificação | pendente | ganho só quando a GPU deixar de ser o limite |
-| T20 NRO + pacote SD (T16–T19) | pendente | |
-| T21 `spirv-opt` nos shaders traduzidos | pendente | |
-| T22 FP16 nos pixel shaders | pendente | se o NVK não honrar, documentar e bloquear |
-| T23 NRO + pacote SD (T21–T22) | pendente | |
+| T16 cena 3D escalada (`gh3_native_scene_scale`) | **[!] bloqueada** | implementação de pé e correta (menu 0,75 vs 1,0: mean_diff 0,7); o aceite de gameplay compara duas capturas separadas e a marca wall-clock cai em trechos diferentes da música (2578 vs 2507 presents). Ver PROGRESS T16. |
+| T17 present em anel (3 command buffers) | **[!] bloqueada** | o fence único é o fallback de cor de teste (`ClearOutput`); o gameplay usa `renderer_.Swap` + presenter do SDK e o renderer já tem `kSubmissionSlots = 4`. Ver PROGRESS T17. |
+| T18 `sub_824D0070` cede o núcleo | **[x] aceita** | gancho em `sub_824CE958` só no lr do laço; log "installed 3". Ganho de CPU, não de FPS. |
+| T19 `sub_8272C7C0` nativo com verificação | **[!] bloqueada** | 1862 linhas, 28 fmadds, 231 loads/146 stores; reescrita bit a bit não é confiável nesta sessão e o FPS não muda enquanto a GPU for o limite. |
+| T20 NRO + pacote SD (T16–T20) | **[x] aceita** | aceite exit 0; ELF em `out/elf/gh3-7d12d79.elf`; pacote `out/sd/switch/gh3-nx`. |
+| T21 `spirv-opt` nos shaders traduzidos | **[!] bloqueada** | o SDK não constrói spirv-tools (só headers; `libSPIRV.a` é glslang); exige patch no SDK + build nos dois toolchains; o gargalo é fill-rate. |
+| T22 FP16 nos pixel shaders | **[!] bloqueada** | o NAK não suporta FP16/VRS nesta GPU (medido pelo nfsmw). |
+| T23 NRO + pacote SD (T21–T22) | **[!] bloqueada** | depende de T21/T22. |
 | T9 brilho | `[!]` | resolvido na prática pelo modo desempenho (era o bloom) |
+
+## Passagem do DeepSeek (2026-10-18)
+
+Commits desta passagem (branch `harness/gh3-marco-c`): `e6992f9` T16 bloqueada, `617c2c6` T17
+bloqueada, `e9e9aad` T18 aceita, `a251dcf` T19 bloqueada, `0e7fe80` T20 aceita, `b1096bb`
+T21-T23 bloqueadas. Suíte 162. A implementação do T16 está pronta; o que falta é prender a captura
+ao tempo de música (ou a um frame de jogo após o início) para o comparativo valer. O T18 foi medido
+no Mac (log/captura); o ganho de CPU no Switch ainda não foi medido. O pacote do SD (T20) está em
+`out/sd/switch/gh3-nx`, com T16 a 0.75 e o modo desempenho.
 
 ## Como trabalhar sem o runner (as mesmas regras que ele impõe)
 
