@@ -118,3 +118,11 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - decisões: o comparativo de gameplay **não é verificável como escrito**: a marca `gameplay` é wall-clock, mas o jogo anima por frame; a corrida 0,75 chega ao marco com 2578 presents e a referência com 2507 (71 frames a mais), caindo em trechos diferentes da música. Repetido 3× (mean_diff 51,4 / 37,4 / 51,9), inclusive com `gh3_min_frame_vblanks=2` nas duas (51,9) e contra a referência borrada em 0,75 (51,5). O limite 12 não é alcançável enquanto o marco não for preso ao tempo de música. Não editei a linha `aceite:` nem enfraqueci teste.
 - pendente: (a) prender a captura ao tempo de música (ou a um frame de jogo após o início da música) para o comparativo valer; (b) medir o ganho de GPU no Switch com `gh3_native_scene_scale=0.75`. A implementação está de pé; falta a verificação automática.
 - 2026-10-18 04:55 T16 [!] bloqueada (medição não determinística)
+
+
+### T17 — tentativa 1
+- feito: inspeção do caminho de present e do anel de submissões; nenhum código alterado (bloqueada antes de implementar).
+- verificado: `Present()` (`src/native/gh3_native_system.cpp:1200`) faz `if (renderer_ready_) { renderer_.Swap(...); return; }`; o command buffer + fence único em ~1278 é o `ClearOutput`, fallback de cor de teste quando o renderer NÃO subiu. O gameplay usa `Renderer::Impl::Swap` + o presenter do SDK (`VulkanPresenter::RefreshGuestOutput`, com `VulkanSubmissionTracker` e fence por submissão). O renderer já tem `kSubmissionSlots = 4`, com fence e pool por slot; `BeginRecording` espera só o slot que vai reutilizar. As esperas de fence medidas no Switch (341-656 ms/s, playbook §8) são GPU/swapchain, não esse fallback.
+- decisões: não implementar um anel no fallback só para o aceite: passaria o log "present ring: N slots" e não mudaria o jogo (regra do T18: não inventar gancho). Se houver serialização de present, ela está no presenter do SDK ou é o vsync; medir antes. Reescopo sugerido: instrumentar a espera de fence do presenter por quadro e, se confirmar serialização, um anel no guest output (patch no SDK).
+- pendente: aceite não rodado de propósito (o log não existe porque o anel não foi adicionado). Reescopo é outra tarefa.
+- 2026-10-18 04:59 T17 [!] bloqueada (premissa não se aplica ao gameplay)
