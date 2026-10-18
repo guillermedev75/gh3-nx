@@ -6,8 +6,8 @@ Para quem continua a fila sem o runner do Claude (ex.: OpenCode + DeepSeek). Lei
 ## Estado agora
 
 - Worktree `~/gh3-nx-wt/marco-c`, branch `harness/gh3-marco-c`. `main` (em `~/gh3-nx`) e o GitHub
-  (github.com/guillermedev75/gh3-nx, público) estão em `784e3c5`. Os commits depois disso (fila T16+, wip do
-  T16) ainda não foram publicados.
+  (github.com/guillermedev75/gh3-nx, público) estão no mesmo commit que a branch, incluindo o wip do T16.
+  Publicar: `git -C ~/gh3-nx merge --ff-only harness/gh3-marco-c && git -C ~/gh3-nx push origin main`.
 - Suíte: `.venv/bin/python -m pytest -q tests` → 161 passed.
 - Runner do Claude **parado** (cota). Ninguém mais está mexendo na worktree.
 - **No Switch o jogo é limitado pela GPU** (playbook §8). Modo desempenho (sem sombra e bloom) ligado no
