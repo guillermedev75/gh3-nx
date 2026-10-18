@@ -98,3 +98,22 @@ Fluxo, do mais barato ao mais caro:
 - `check_no_game_content.sh` tinha brechas (pasta `$SYSTEMUPDATE`, `DIR/` com barra pulando a checagem por
   conteúdo, maiúsculas, contêineres STFS/GOD `CON `/`LIVE`/`PIRS`, symlinks): corrigidas, com teste para cada uma.
 - O pacote do SD é só para uso pessoal (o NRO tem o `generated/` compilado).
+
+## 7. Marco D — otimizações (2026-10-17/18)
+
+| Item | Resultado | Como |
+|---|---|---|
+| Medidor de FPS da gameplay no Mac | linha de base nativo: 53 swaps/s, ~342 draws/quadro; ruído de corrida ~±10% (3 corridas do mesmo build: 55,6/66,2/64,8 de game_fps) | `tools/gameplay_fps.py` (roteiro até a marca `gameplay`, lê `[native] last 10 s`) |
+| Registradores como locais (`ctr/xer/cr_as_local`) | 155.854 usos de `ctx.xer/ctr` → 0; sem ganho acima do ruído no Mac | as opções vão no topo de `config/gh3_functions.toml` (no manifesto são ignoradas) |
+| `non_volatile_as_local` | derruba o jogo (violação em 0x84) | funções partidas leem registradores antes de escrever: precisa do `share_registers` + `lee_antes.py` do nfsmw-nx |
+| Chamadas diretas + LTO no NRO | 88.007 `sub_X(ctx, base)` → `__imp__sub_X` em 142 arquivos; NRO com `-flto=6`, `_start` em 0 | `tools/llamadas_diretas.py` no fim do `tools/codegen.sh`; `cmake/switch.cmake` |
+| Linha de base no Switch (fábrica, 1 jogador) | ~27–35 swaps/s, ~230 draws/quadro; CPU do renderer 22–28 ms e GPU ~31–36 ms reais por quadro | log `logs/gh3_*.log` (FTP do DBI); GPU do driver × 1,627 |
+
+Lições do harness nesta fase:
+- Conferir trabalho de uma sessão com `git status --short`/`git diff --cached`, não só `git diff`: o agente deixa
+  tudo no índice, e um `reset --hard` apaga (recuperável com `git fsck --lost-found`, os blobs ficam soltos).
+- Sessão que termina e fica ociosa só cai pelo `ITER_TIMEOUT_SEC`; correção proposta no próprio harness.
+- Padrão anti-skip `xit(` casa com `sys.exit(` em Python: usar padrões da linguagem do projeto.
+
+App no Switch: título "Guitar Hero III: Legends of Rock"; ícone recortado do menu principal do próprio jogo por
+`tools/make_icon.py` → `out/switch/icon.jpg` (fora do git, arte da publisher).

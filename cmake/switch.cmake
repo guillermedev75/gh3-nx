@@ -58,7 +58,13 @@ target_compile_definitions(gh3 PRIVATE GH3_NATIVE_RENDERER=1)
 target_link_libraries(gh3 PRIVATE gh3_recomp)
 target_link_options(gh3 PRIVATE -flto=6 -flto-partition=balanced)
 rexglue_switch_configure_target(gh3 GPU_PLUGINS xenos)
-set(GH3_NRO_NAME "gh3-nx" CACHE STRING "Título mostrado pelo Homebrew Menu")
+set(GH3_NRO_NAME "Guitar Hero III: Legends of Rock" CACHE STRING "Título mostrado pelo Homebrew Menu")
+# Ícone: o logo do jogo, gerado na máquina de quem tem o disco (tools/make_icon.py → out/switch/icon.jpg,
+# fora do git); sem ele, o ícone genérico do repositório.
+set(GH3_NRO_ICON "${CMAKE_SOURCE_DIR}/switch/icon.jpg")
+if(EXISTS "${CMAKE_SOURCE_DIR}/out/switch/icon.jpg")
+    set(GH3_NRO_ICON "${CMAKE_SOURCE_DIR}/out/switch/icon.jpg")
+endif()
 set(GH3_NRO_VERSION "0.1.0" CACHE STRING "Versão mostrada pelo Homebrew Menu")
 rexglue_switch_add_nro(gh3 NAME "${GH3_NRO_NAME}" AUTHOR "Guillerme Manhaes"
-    VERSION "${GH3_NRO_VERSION}" ICON "${CMAKE_SOURCE_DIR}/switch/icon.jpg")
+    VERSION "${GH3_NRO_VERSION}" ICON "${GH3_NRO_ICON}")

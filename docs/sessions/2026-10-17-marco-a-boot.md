@@ -1,6 +1,6 @@
 ---
 created: 2026-10-17
-updated: 2026-10-17
+updated: 2026-10-18
 ---
 
 # 2026-10-17 — Marco A: GH3 roda no Mac com imagem e som
@@ -37,3 +37,12 @@ Estado: o `default.xex` (USA/Europa multi 5) recompilado roda no macOS arm64 com
 - Resultado (relatado): roda inteiro, sem bugs além do brilho excessivo; abaixo de ~20 FPS nos clocks de fábrica, jogável com OC.
 - Mac, renderer nativo: 38–44 FPS na gameplay (log), contra ~5 do emulado.
 - Pendente: medir FPS no console pelo log (`logs/` ao lado do NRO, linhas `[native] last 10 s ... swaps`), consertar o brilho (T9), marco D (desempenho).
+
+## Marco D (noite de 17 → 18)
+
+- Linha de base no Switch tirada dos logs via FTP do DBI (sem cabo): fábrica/1 jogador ~27–35 swaps/s; GPU e CPU do
+  renderer acima de 16,7 ms → GPU (T14, T15) entra na frente da fila.
+- T10 (medidor), T11 (registradores locais) e T12 (chamadas diretas + LTO) feitos. T9 (brilho) adiado pelo Guillerme.
+- Harness trocado para Sonnet 5.5 para economizar cota.
+- App renomeado para "Guitar Hero III: Legends of Rock" com ícone do próprio jogo (gerado localmente).
+- Repositório público no GitHub criado (só código GPL; checagem de conteúdo antes do push).
