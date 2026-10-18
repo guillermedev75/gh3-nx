@@ -32,6 +32,10 @@ target_precompile_headers(gh3_recomp PRIVATE "${GH3_GENERATED_DIR}/gh3_pch.h")
 # registrador q de 128 bits, e uma page fault no meio voltava com o q31 zerado no Horizon (crash
 # real no THPS). Registradores gerais sobrevivem a todo caminho de retomada; os vetoriais não.
 target_compile_options(gh3_recomp PRIVATE -fno-tree-slp-vectorize -fno-tree-vectorize)
+# LTO só no código traduzido + executável (o SDK fica como está): com as chamadas diretas
+# (tools/llamadas_diretas.py) o GCC passa a inlinar entre funções traduzidas. -flto=6 limita os
+# jobs de link (o Docker tem 7,7 GiB).
+target_compile_options(gh3_recomp PRIVATE -flto=6 -fno-fat-lto-objects)
 
 # No Switch o plugin xenos já entra inteiro no executável (rexglue_switch_configure_target, com
 # --whole-archive), então o renderer nativo e a GPU emulada linkam direto nele; não existe a
@@ -52,6 +56,7 @@ target_include_directories(gh3 PRIVATE
     "${REXSDK_DIR}/thirdparty/glslang")
 target_compile_definitions(gh3 PRIVATE GH3_NATIVE_RENDERER=1)
 target_link_libraries(gh3 PRIVATE gh3_recomp)
+target_link_options(gh3 PRIVATE -flto=6 -flto-partition=balanced)
 rexglue_switch_configure_target(gh3 GPU_PLUGINS xenos)
 set(GH3_NRO_NAME "gh3-nx" CACHE STRING "Título mostrado pelo Homebrew Menu")
 set(GH3_NRO_VERSION "0.1.0" CACHE STRING "Versão mostrada pelo Homebrew Menu")

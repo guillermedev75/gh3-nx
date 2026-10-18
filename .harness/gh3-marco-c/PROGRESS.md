@@ -83,3 +83,10 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - decisões: `non_volatile_as_local` fica false: true derruba o jogo (violação de acesso em 0x84, 16 PRESENT) — funções partidas leem registradores antes de escrever; exige portar `share_registers` + `lee_antes.py` do nfsmw (fora do escopo; ver playbook).
 - pendente: non_volatile_as_local; NRO do Switch não recompilado com os novos gerados.
 - 2026-10-17 23:20 T11 ✅ aceita (iter 3)
+
+### T12 — tentativa 1
+- feito: `tools/llamadas_diretas.py` (`sub_X(ctx, base);` → `__imp__sub_X(ctx, base);`, idempotente; 88007 chamadas em 142 arquivos), chamado no fim de `tools/codegen.sh`; `-flto=6 -fno-fat-lto-objects` no `gh3_recomp` e `-flto=6 -flto-partition=balanced` no link do `gh3` em `cmake/switch.cmake`; `tests/test_direct_calls.py` (6, vermelhos antes). Suíte 117 passed. NRO rebuildado no Docker com LTO: exit 0, 61,5 MiB, `check_nro` OK.
+- medido: Mac nativo game_fps 61,3 na 1ª corrida (logo após compilar, ruído já visto no T11) e 64,0 na 2ª (baseline 66,4, limite 63,0); captura white=0,001 stddev=49,3. Sem ganho de FPS no Mac mensurável (o ganho esperado é do LTO no Switch, sem hardware aqui).
+- decisões: `__imp__` direto perde o ponto de gancho por nome `sub_*`; o GH3 não tem nenhum (src/ não define). LTO só no código traduzido + executável, SDK fora (memória do Docker 7,7 GiB). Nenhuma dependência nova.
+- pendente: `nm | grep " _start$"` = 0 não conferido; tempo do build Switch com LTO não cronometrado; ganho de FPS no Switch não medido (H2/H3).
+- 2026-10-18 00:20 T12 ✅ aceita à mão (Guillerme+Claude): a sessão terminou e ficou ociosa; trabalho recuperado do índice do git após reset por engano. Conferido: suíte 117, NRO LTO 00:12 válido, `_start` = 0; FPS Mac 64,0 (limite 63,0) e captura ok medidos pelo agente.
