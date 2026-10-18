@@ -134,3 +134,11 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - decisões: o gancho age só no `lr` do laço (as outras 10 chamadas vão direto ao `__imp__`); `AfterRead` reusa o detector por thread (dorme após N leituras iguais). Ganho esperado é CPU livre no Switch, não FPS (a GPU é o limite).
 - pendente: medir no Switch (CPU do thread de render / `guest waits: yields`).
 - 2026-10-18 05:05 T18 ✅ aceita
+
+
+### T19 — tentativa 1
+- feito: levantamento de `sub_8272C7C0` (`generated/default/gh3_recomp.101.cpp`): 1862 linhas; 28 `fmadds`, 23 `fmuls`, 12 `fadds`, 4 `fsubs`, 81 `lfs`, 66 `stfs`, 231 `REX_LOAD`/146 `REX_STORE`; 2 chamadas (`sub_8248EB20`, `sub_8272BB90`). Nada alterado.
+- verificado: contagem acima no gerado (dump direto do arquivo).
+- decisões: bloqueada — grande demais para reescrever com confiança e verificação bit a bit nesta sessão: `fmadds` arredonda uma vez (C `a*b+c` arredonda duas; teria que usar `std::fma` em cada um), 147 acessos à memória do guest e o harness de verificação teria que reproduzir a semântica exata do original. Além disso, o ganho de FPS é zero enquanto a GPU for o limite (playbook §8: modo desempenho, GPU ~13 ms, FPS ~45, threads esperando). Risco alto para ganho não mensurável.
+- pendente: reescopo quando a GPU deixar de ser o limite, ou uma função quente menor; o `gh3_hot_math_verify` do plano pode ser reusado.
+- 2026-10-18 05:06 T19 [!] bloqueada (grande demais / GPU é o limite)
