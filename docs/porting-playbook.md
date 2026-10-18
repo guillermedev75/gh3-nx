@@ -74,6 +74,13 @@ Fluxo, do mais barato ao mais caro:
 - Upscaling tipo DLSS/FSR (renderizar menor e ampliar) só ajuda se o gargalo for a GPU desenhando pixels. No Mac
   com GPU emulada o custo principal tende a ser CPU (tradução de comandos Xenos → Vulkan → Metal); medir antes.
 - Geração de quadros (Lossless Scaling, FSR 3 FG) adiciona latência: fora para jogo de ritmo; opcional nos outros.
+- **FPS da gameplay (Mac, `tools/gameplay_fps.py`)**: roda o roteiro com `--gh3_renderer=native` até a marca
+  `gameplay` e lê as linhas `[native] last 10 s: ... draws ... swaps` e `per frame: ... waits for the game, N ms
+  waiting`. Descarta o 1º bloco de 10 s depois da marca (pega o trecho anterior) e tira a média dos `--seconds/10`
+  seguintes. Grava `swaps_per_s`, `draws_per_s`, `wait_ms` e `game_fps` = `draws_per_s` / mediana de `per frame:
+  N draws` (estimativa: não depende de o swap se repetir quando o jogo atrasa). `--min-vs base.json` sai 1 se
+  `game_fps` cair mais de 5%. Linha de base (2026-10-17, Mac, nativo, 30 s): `out/perf/baseline.json` — game_fps
+  53,0, swaps/s 46,5, 19386 draws/s, 7,0 ms de espera. Uma corrida leva ~2 min.
 
 ## 6. Revisão do marco C (2026-10-17)
 

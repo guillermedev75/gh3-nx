@@ -44,7 +44,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 
 ## Marco D — desempenho (fila do nfsmw-nx; gargalo medido no Switch: CPU do código do jogo, ~12 ms/quadro com o renderer esperando o jogo; ~18 quadros de jogo/s)
 
-- [ ] T10: medidor de FPS da gameplay no Mac (linha de base para o marco D)
+- [x] T10: medidor de FPS da gameplay no Mac (linha de base para o marco D)
   aceite: .venv/bin/python -m pytest -q tests/test_gameplay_fps.py && python3 tools/gameplay_fps.py --renderer native --seconds 30 --out out/perf/baseline.json && python3 -c "import json;d=json.load(open('out/perf/baseline.json'));assert d['game_fps']>0 and d['swaps_per_s']>0"
   detalhe: tools/gameplay_fps.py roda o roteiro (config/song_script.json) com --gh3_renderer=native até a marca de gameplay e lê as linhas "[native] last 10 s: ... draws ... swaps" e "per frame: ... waits for the game, N ms waiting" depois da marca; grava JSON com swaps_per_s, draws_per_s, wait_ms, e game_fps estimado (draws_per_s / draws de um quadro de gameplay, medido no próprio run como mediana de draws por swap quando o renderer não espera o jogo). Documentar o método no playbook §5. Testes com logs sintéticos.
 - [ ] T11: registradores PowerPC como variáveis locais no codegen (cr/xer/ctr/non_volatile)

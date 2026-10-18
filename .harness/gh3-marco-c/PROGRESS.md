@@ -68,3 +68,10 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - pendente: entrada é wall clock e o índice é quadro; máquina muito mais lenta/rápida pode deslocar a janela (margem ~±350 quadros). Headers não compilados no GCC do Switch (Docker). Sondas descartáveis em `out/t8/`.
 - 2026-10-17 16:54 T8 ✅ aceita (iter 1)
 - 2026-10-17 17:54 T9 ❌ tentativa 1: sessão do claude travou: passou de 3600s sem terminar (ITER_TIMEOUT_SEC) e foi encerrada
+
+### T10 — tentativa 1
+- feito: `tools/gameplay_fps.py` (roteiro até a marca `gameplay`, lê `last 10 s`/`per frame` do log, JSON com swaps_per_s, draws_per_s, wait_ms, draws_per_frame, game_fps; `--min-vs` com tolerância de 5% já pronto para T11/T12) + `tests/test_gameplay_fps.py` (7, logs sintéticos e jogo falso; vermelhos antes). Playbook §5.
+- medido: linha de base `out/perf/baseline.json`: game_fps 53,0, swaps/s 46,5, 19386 draws/s, espera 7,0 ms (30 s, 3 blocos; ~2 min por corrida).
+- decisões: o 1º bloco de 10 s depois da marca é descartado (cobre o trecho antes dela). game_fps = draws_per_s / mediana de "per frame: N draws" como manda o detalhe; é estimativa e fica perto de swaps/s quando o jogo não atrasa. Nenhuma dependência nova.
+- pendente: 1 corrida só (variância entre corridas não medida); depende de wall clock do roteiro como o T8.
+- 2026-10-17 22:28 T10 ✅ aceita (iter 1)
