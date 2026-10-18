@@ -56,7 +56,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [x] T13: esperas ativas do jogo dormem em vez de girar (swap/vblank/jobs)
   aceite: .venv/bin/python -m pytest -q tests/test_guest_waits.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-t13.png && python3 tools/image_stats.py out/parity/native-t13.png --max-white 0.15 --min-stddev 20 && grep -q "guest waits: installed" out/parity/native-t13.capture/game.log
   detalhe: o project8-sw (mesmo motor Neversoft) troca as esperas em src/game/src/guest_swap_wait.h, guest_job_wait.h, guest_render_wait.h, guest_ring_wait.h por versões que dormem/cedem, nos endereços do THPS. Achar as funções equivalentes no GH3 (assinatura das instruções do laço; o THPS e o GH3 compartilham o motor), instalar os mesmos ganchos e logar "guest waits: installed N" ao iniciar. Cada gancho devolve exatamente o que o laço original devolveria. Cvars para ligar/desligar cada um (padrão ligado no Switch).
-- [ ] T14: modo de GPU oficial 460,8 MHz no portátil (apm 0x92220008)
+- [x] T14: modo de GPU oficial 460,8 MHz no portátil (apm 0x92220008)
   aceite: .venv/bin/python -m pytest -q tests/test_switch_apm.py && test -f build/switch/gh3.nro && strings build/switch/gh3 | grep -q "apm performance configuration"
   detalhe: portar ~/gh3-refs/nfsmw-nx/sdk/src/ui/switch_apm.cpp (e o uso em app/src/nfsmw_ajustes_graficos.cpp): pedir 0x92220008 (GPU 460,8 + EMC 1331,2) no portátil, voltar ao padrão ao sair, logar "apm performance configuration 0x...". Cvar gh3_switch_gpu_boost (padrão true). Teste da escolha de configuração (portátil/dock) sem hardware. Rebuild do NRO.
 - [ ] T15: palco com 1 amostra por pixel no Switch sem voltar o branco (custo de GPU do MSAA-como-amostras)

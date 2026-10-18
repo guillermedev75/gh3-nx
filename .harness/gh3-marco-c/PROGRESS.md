@@ -97,3 +97,9 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - decisões: padrão desligado fora do Switch, ligado no Switch (regra da casa p/ patch de comportamento). Não consegui rodar `build_host_sdk.sh` (aprovação negada neste ambiente); o binário existente já continha o gancho (marcador no log).
 - pendente: ganho real (CPU do thread de render) só medível no Switch; no Mac o gancho fica desligado, então nada medido de FPS. O wip também trouxe `frame_stats.h` e mudanças em `native_renderer.cpp`/`AGENTS.md` fora do escopo estrito de T13.
 - 2026-10-18 02:37 T13 ✅ aceita (iter 1)
+
+### T14 — tentativa 1
+- feito: `src/switch_apm_config.h` (escolha pura: portátil+boost → 0x92220008, senão 0), `src/switch_apm.h` (cvar `gh3_switch_gpu_boost` padrão true; libnx apm só sob `__SWITCH__`; loga "apm performance configuration 0x..."; Restore() devolve a configuração lida antes), ligado em `gh3_app.h` (OnPostSetup / OnShutdown); `switch/gh3.toml`; `tests/test_switch_apm.py` (5, vermelhos antes). NRO rebuildado no Docker: `check_nro` OK, string no binário. Suíte 142 passed.
+- decisões: restaurar a configuração lida por `apmGetPerformanceConfiguration` em vez de fixar um "padrão"; no dock não mexe (já 768 MHz). Não consegui ler `~/gh3-refs/nfsmw-nx` (leitura negada neste ambiente): porto feito pela API do libnx e pelo valor do detalhe. Nenhuma dependência nova.
+- pendente: efeito real (clock/FPS) só medível no Switch; chamadas apm* compiladas mas não executadas. Script auxiliar `out/build_switch_t14.sh` (fora do git) só embrulha o comando do AGENTS.md.
+- 2026-10-18 02:46 T14 ✅ aceita (iter 2)

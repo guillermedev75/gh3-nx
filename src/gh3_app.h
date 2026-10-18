@@ -20,6 +20,7 @@
 #include "dump_gate.h"
 #include "frame_stats.h"
 #include "guest_waits.h"
+#include "switch_apm.h"
 #include "mark_screenshot.h"
 #include "parity_capture.h"
 #include "present_counter.h"
@@ -107,6 +108,8 @@ class Gh3App : public rex::ReXApp {
     SetGuestFrameStats([this] { return MuestreaFotograma(); });
     // Esperas ativas (swap/vblank) cedem o núcleo em vez de girar (src/guest_waits.h).
     gh3::guest_waits::Install(runtime());
+    // GPU a 460,8 MHz no portátil (src/switch_apm.h); no-op fora do Switch.
+    gh3::apm::Apply();
     std::string marks = REXCVAR_GET(mark_screenshot);
     if (!marks.empty()) {
       rexglue_script_input::SetMarkObserver(
@@ -125,6 +128,7 @@ class Gh3App : public rex::ReXApp {
   void OnShutdown() override {
     rexglue_script_input::SetMarkObserver({});
     parity_capture_.Stop();
+    gh3::apm::Restore();
   }
   // Trava do default.xex (src/dump_gate.h): o último gancho antes do Runtime existir, então recusar
   // aqui não deixa nada pela metade. Sem flag para desligar.

@@ -25,5 +25,9 @@ gh3_guest_waits = true
 # Loga a contagem de cedências a cada 4096. Diagnóstico.
 gh3_guest_waits_stats = false
 
+# No portátil, pede o modo de GPU oficial de 460,8 MHz (apm 0x92220008) e volta ao padrão ao sair
+# (src/switch_apm.h).
+gh3_switch_gpu_boost = true
+
 # The log goes to logs/ next to the NRO.
 log_level = "info"
