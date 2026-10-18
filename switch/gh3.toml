@@ -10,6 +10,9 @@ gh3_renderer = "native"
 
 # One sample per pixel; true renders the game's multisampled targets with their samples.
 gh3_native_msaa = false
+# O palco (superfície 4x de pitch P) com 1 amostra por pixel de guest, subindo por blit para o alvo 1x de
+# pitch 2P que o jogo lê; true desenha as amostras como pixels (4x os pixels, ~31-36 ms de GPU/quadro).
+gh3_native_msaa_as_samples = false
 # Upper bound on anisotropic texture filtering (1-16).
 gh3_native_max_anisotropy = 2
 # Depth in 32 bits per pixel instead of 64.

@@ -29,4 +29,20 @@ struct SpinDetector {
   }
 };
 
+// Vblank "late no wait": no sub_822BF0F8 o jogo arredonda um frame atrasado para o alvo+2
+// (dois ticks de 16,7 ms). Este detector guarda o atraso da 1a leitura e decide se a leitura do
+// laço deve devolver o alvo para soltar o frame na hora.
+struct VblankLateSkip {
+  bool late = false;
+
+  void OnLateRead(uint64_t counter, uint64_t target) { late = counter >= target; }
+
+  // Devolve true se a leitura do laço deve ser substituída pelo alvo (solta o frame).
+  bool OnLoopRead(uint64_t counter, uint64_t target) {
+    if (!late) return false;
+    late = false;
+    return counter < target;
+  }
+};
+
 }  // namespace gh3::guest_waits

@@ -108,6 +108,7 @@ Fluxo, do mais barato ao mais caro:
 | `non_volatile_as_local` | derruba o jogo (violação em 0x84) | funções partidas leem registradores antes de escrever: precisa do `share_registers` + `lee_antes.py` do nfsmw-nx |
 | Chamadas diretas + LTO no NRO | 88.007 `sub_X(ctx, base)` → `__imp__sub_X` em 142 arquivos; NRO com `-flto=6`, `_start` em 0 | `tools/llamadas_diretas.py` no fim do `tools/codegen.sh`; `cmake/switch.cmake` |
 | Linha de base no Switch (fábrica, 1 jogador) | ~27–35 swaps/s, ~230 draws/quadro; CPU do renderer 22–28 ms e GPU ~31–36 ms reais por quadro | log `logs/gh3_*.log` (FTP do DBI); GPU do driver × 1,627 |
+| Palco com 1 amostra por pixel (T15) | palco 4x de pitch P desenhado em 1 amostra (640x1024 em vez de 1280x1328 de profundidade), `white=0,001` no Mac; ganho de GPU só medível no Switch | `gh3_native_msaa_as_samples=false` (agora no `switch/gh3.toml`) |
 
 Lições do harness nesta fase:
 - Conferir trabalho de uma sessão com `git status --short`/`git diff --cached`, não só `git diff`: o agente deixa
@@ -117,3 +118,19 @@ Lições do harness nesta fase:
 
 App no Switch: título "Guitar Hero III: Legends of Rock"; ícone recortado do menu principal do próprio jogo por
 `tools/make_icon.py` → `out/switch/icon.jpg` (fora do git, arte da publisher).
+
+### Palco 1x sem o branco: alias 1 amostra → alvo 1x (T15)
+
+- Sintoma: `--gh3_native_msaa_as_samples=false` com 1 amostra (`gh3_native_msaa=false`) → palco branco
+  (`white=0,77`). Causa: o GH3 desenha o palco como superfície 4x de pitch P (640x360 px × 4 amostras) e depois
+  lê a mesma EDRAM como alvo 1x de pitch 2P (1280x720); com chaves por pitch são duas imagens, e a 1x nunca
+  recebia o palco (só as luzes aditivas, que somavam até branco).
+- Conserto: a chave do alvo ganhou `alias_msaa` (amostras do guest da superfície desenhada com 1 amostra;
+  `AliasMsaa()`); cada uso dessa imagem incrementa `alias_seq`; ao usar um alvo 1x (draw, resolve, clear)
+  `SyncAliasTarget` faz um `vkCmdBlitImage` NEAREST 2x2 da imagem 1 amostra de pitch/2 na mesma base, se ela foi
+  usada depois do último sync (cor e profundidade). Região por `edram::AliasBlitExtent` (testada, sem GPU).
+- Armadilhas: o sync tem de rodar em `Draw()` e não só em `GetRenderTarget`, porque setups em cache não
+  passam por `GetRenderTarget`; `gh3_native_msaa` agora é `false` por padrão (com `true` e samples-as-pixels
+  desligado não há alias e o palco sai branco). Sombra do palco fica em 640x360 de sombreamento, com
+  bordas em 1 amostra (sem a grade 2x2 de amostras do guest).
+- `gameplay_capture.py`/`gameplay_fps.py` aceitam cvars extras depois de `--` (`-- --cvar=valor`).

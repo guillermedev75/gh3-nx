@@ -13,6 +13,7 @@ Uso:
   python3 tools/gameplay_capture.py --renderer native   --out out/parity/native.png
   python3 tools/gameplay_capture.py ... --mark song | --frame 2700
   python3 tools/gameplay_capture.py ... -- CMD ...      # comando próprio (testes); recebe as mesmas flags
+  python3 tools/gameplay_capture.py ... -- --cvar=valor # só flags: cvars extras para o run-gh3.command
 Sai 0 com o PNG em --out; 1 em timeout, se o jogo sair antes ou se o log tiver "[FATAL]".
 """
 from __future__ import annotations
@@ -62,6 +63,13 @@ def marked_png(capture_dir: pathlib.Path, mark: str):
     return png if png.exists() else None
 
 
+def split_cmd(rest):
+    """Depois de `--`: só flags (`--cvar=x`) são cvars extras do jogo padrão; senão é um comando próprio."""
+    if rest and rest[0].startswith("-"):
+        return [], list(rest)
+    return list(rest), []
+
+
 def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("--renderer", choices=("emulated", "native"), default="emulated")
@@ -92,7 +100,8 @@ def main(argv):
         what = f"a marca {a.mark}"
     if a.renderer == "native":
         flags.append("--gh3_renderer=native")
-    cmd = (a.cmd or [str(ROOT / "run-gh3.command")]) + flags
+    own_cmd, extra = split_cmd(a.cmd)
+    cmd = (own_cmd or [str(ROOT / "run-gh3.command")]) + flags + extra
     env = dict(os.environ, GH3_LOG_FILE=str(log))
     env.setdefault("GH3_BUILD_DIR", BUILD_DIR)
 

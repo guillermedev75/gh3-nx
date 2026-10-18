@@ -103,3 +103,10 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - decisões: restaurar a configuração lida por `apmGetPerformanceConfiguration` em vez de fixar um "padrão"; no dock não mexe (já 768 MHz). Não consegui ler `~/gh3-refs/nfsmw-nx` (leitura negada neste ambiente): porto feito pela API do libnx e pelo valor do detalhe. Nenhuma dependência nova.
 - pendente: efeito real (clock/FPS) só medível no Switch; chamadas apm* compiladas mas não executadas. Script auxiliar `out/build_switch_t14.sh` (fora do git) só embrulha o comando do AGENTS.md.
 - 2026-10-18 02:46 T14 ✅ aceita (iter 2)
+
+### T15 — tentativa 1
+- feito: alias 1 amostra → alvo 1x: `RenderTargetKey.alias_msaa` + `AliasMsaa()`, `SyncAliasTarget()` (blit NEAREST 2x2 de cor/profundidade da imagem de pitch P para o alvo 1x de pitch 2P) chamado em `GetRenderTarget` e em `Draw()` (setups em cache não passam por `GetRenderTarget`); `edram::AliasBlitExtent` em `native_edram_samples.h` (+2 testes C++ compilados, +1 de fonte); `gameplay_capture.py`/`gameplay_fps.py` aceitam só-flags depois de `--`; `switch/gh3.toml` com `gh3_native_msaa_as_samples = false`; playbook §7.
+- verificado: aceite verde (white=0,001 stddev=45,7, log só com alvos 1x); suíte 146 passed; captura no padrão (samples=true) intacta (white=0,001). FPS Mac 62,9 (samples) vs 68,9 (alias): dentro do ruído, GPU do Mac não é o gargalo.
+- decisões: `gh3_native_msaa` agora `false` por padrão (o aceite só passa `as_samples=false`; com MSAA 4x de host não há alias e o palco sai branco; o Switch já usava false). A 1ª corrida do aceite "passou" por acaso (captura caiu em outra tela); a causa real do branco só aparece com a marca em gameplay.
+- pendente: ganho de GPU/ms no Switch não medido (NRO não recompilado); borda do palco em 1 amostra (sem amostras 2x2); se algum frame usar a 1x antes do 4x no mesmo quadro, o blit pode sobrescrever o conteúdo da 1x (não observado).
+- 2026-10-18 03:10 T15 ✅ aceita (iter 3)

@@ -163,6 +163,17 @@ def test_capture_native_passes_renderer_flag(tmp_path):
     assert "--gh3_renderer=native" in argv_file.read_text().split()
 
 
+def test_capture_extra_cvars_after_dashdash_go_to_the_default_command(tmp_path):
+    """`-- --cvar=x` (só flags) vai para o comando padrão; o resto de `--` segue sendo comando próprio."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("gameplay_capture", CAPTURE)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.split_cmd(["--gh3_native_msaa_as_samples=false"]) == ([], ["--gh3_native_msaa_as_samples=false"])
+    assert mod.split_cmd(["python3", "x.py", "--a=1"]) == (["python3", "x.py", "--a=1"], [])
+    assert mod.split_cmd([]) == ([], [])
+
+
 def test_capture_fails_when_no_frame_arrives(tmp_path):
     game = tmp_path / "idle.py"
     game.write_text("import time\ntime.sleep(60)\n")

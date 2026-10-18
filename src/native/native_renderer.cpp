@@ -73,13 +73,17 @@ REXCVAR_DEFINE_BOOL(gh3_native_gpu_profile, false, "GH3",
 REXCVAR_DEFINE_BOOL(gh3_native_record_thread, false, "GH3",
                     "Make the Vulkan calls of draws on a second thread, so the command ring "
                     "thread prepares the next draw meanwhile");
-REXCVAR_DEFINE_BOOL(gh3_native_msaa, true, "GH3",
-                    "Render with the multisampling the game asks for; off draws every target "
-                    "with one sample, which costs the GPU much less memory bandwidth");
+REXCVAR_DEFINE_BOOL(gh3_native_msaa, false, "GH3",
+                    "Render with the multisampling the game asks for; off (default) draws every "
+                    "target with one sample, which costs the GPU much less memory bandwidth. With "
+                    "gh3_native_msaa_as_samples=false and off, the stage's 4x surface is drawn with "
+                    "one sample and blitted up to the 1x target that shares its EDRAM (T15); on "
+                    "with samples-as-pixels off has no such alias and the stage comes out white");
 REXCVAR_DEFINE_BOOL(gh3_native_msaa_as_samples, true, "GH3",
                     "Draw multisampled surfaces as their EDRAM samples, into the single-sampled "
                     "target that shares that EDRAM (4x at pitch P = 1x at pitch 2P), as the game "
-                    "clears its targets; overrides gh3_native_msaa");
+                    "clears its targets; overrides gh3_native_msaa. Off: one sample per guest pixel "
+                    "(gh3_native_msaa=false), a quarter of the pixels shaded");
 REXCVAR_DEFINE_BOOL(gh3_native_zcull, false, "GH3",
                     "Clear the depth attachment on its first pass of the frame instead of loading it: "
                     "NVK only enables ZCULL (skip hidden pixels) when the depth loadOp is CLEAR");
@@ -228,6 +232,9 @@ struct RenderTargetKey {
   uint32_t format;
   uint32_t msaa;
   uint32_t is_depth;
+  // log2 of the guest sample count of a surface drawn with one sample whose EDRAM the 1x target at
+  // pitch * scale shares (T15, AliasMsaa); 0 for every other target.
+  uint32_t alias_msaa;
   bool operator==(const RenderTargetKey& o) const { return !std::memcmp(this, &o, sizeof(o)); }
 };
 struct RenderTargetKeyHasher {
@@ -248,6 +255,11 @@ struct RenderTarget {
   uint64_t last_used_frame = 0;
   // Frame in which the depth was last cleared by the pass (gh3_native_zcull).
   uint64_t cleared_frame = ~uint64_t(0);
+  // T15: the 1-sample image of a multisampled surface counts its uses (alias_seq); the 1x target that
+  // shares its EDRAM remembers the last one it was brought up to (synced_seq).
+  uint64_t alias_seq = 0;
+  uint64_t synced_seq = 0;
+  uint64_t checked_clock = ~uint64_t(0);
 };
 
 // The attachments of a rendering scope: color 0-3 and depth.
@@ -1343,6 +1355,14 @@ struct Renderer::Impl {
   // --- Render targets ------------------------------------------------------------
 
   RenderTarget* GetRenderTarget(const RenderTargetKey& key, uint32_t min_height);
+  RenderTarget* CreateOrGetRenderTarget(const RenderTargetKey& key, uint32_t min_height);
+  // T15: guest MSAA surfaces drawn with one sample (no samples as pixels, no host MSAA) keep their own
+  // image; the game then reads that EDRAM as the 1x target at pitch * 2, which SyncAliasTarget fills.
+  uint32_t AliasMsaa(uint32_t guest_msaa) const {
+    return (!msaa_as_samples && !multisample && guest_msaa >= 1) ? guest_msaa : 0;
+  }
+  uint64_t alias_clock = 0;
+  void SyncAliasTarget(RenderTarget* target);
   void EndPass() {
     if (in_pass) {
       dfn().vkCmdEndRendering(cmd());
@@ -2463,6 +2483,71 @@ VkPipeline Renderer::Impl::CreatePipeline(const PipelineJob& job) {
 // --- Render targets ------------------------------------------------------------------
 
 RenderTarget* Renderer::Impl::GetRenderTarget(const RenderTargetKey& key, uint32_t min_height) {
+  RenderTarget* target = CreateOrGetRenderTarget(key, min_height);
+  if (!target) return target;
+  if (key.alias_msaa) {
+    target->alias_seq = ++alias_clock;  // the image the game is about to draw to / read
+  } else {
+    SyncAliasTarget(target);
+  }
+  return target;
+}
+
+// The 1x target at pitch P*scale takes the 1-sample image of the guest MSAA surface of pitch P at the
+// same EDRAM base, if that image was used since: the game clears and draws the stage through the MSAA
+// surface and reads (resolves, tests against) the 1x one.
+void Renderer::Impl::SyncAliasTarget(RenderTarget* target) {
+  if (msaa_as_samples || multisample || target->key.alias_msaa) return;
+  if (target->checked_clock == alias_clock) return;
+  target->checked_clock = alias_clock;
+  for (uint32_t guest_msaa = 1; guest_msaa <= 2; ++guest_msaa) {
+    uint32_t scale_x = guest_msaa >= 2 ? 2 : 1;
+    if (target->key.pitch % scale_x) continue;
+    RenderTargetKey source_key = target->key;
+    source_key.pitch = target->key.pitch / scale_x;
+    source_key.alias_msaa = guest_msaa;
+    auto it = render_targets.find(source_key);
+    if (it == render_targets.end()) continue;
+    RenderTarget* source = it->second.get();
+    if (source->alias_seq <= target->synced_seq) continue;
+    edram::AliasBlit extent =
+        edram::AliasBlitExtent(guest_msaa, source->width, source->height, target->width, target->height);
+    target->synced_seq = source->alias_seq;
+    if (!extent.valid) continue;
+    BeginRecording();
+    EndPass();
+    VkCommandBuffer c = cmd();
+    VkMemoryBarrier before = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
+                              VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                                  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                                  VK_ACCESS_TRANSFER_WRITE_BIT,
+                              VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT};
+    dfn().vkCmdPipelineBarrier(c, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                               1, &before, 0, nullptr, 0, nullptr);
+    VkImageAspectFlags aspect =
+        target->key.is_depth ? (HasStencil(target->format)
+                                    ? VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT
+                                    : VkImageAspectFlags(VK_IMAGE_ASPECT_DEPTH_BIT))
+                             : VK_IMAGE_ASPECT_COLOR_BIT;
+    VkImageBlit blit = {};
+    blit.srcSubresource = {aspect, 0, 0, 1};
+    blit.dstSubresource = blit.srcSubresource;
+    blit.srcOffsets[1] = {int32_t(extent.src_w), int32_t(extent.src_h), 1};
+    blit.dstOffsets[1] = {int32_t(extent.dst_w), int32_t(extent.dst_h), 1};
+    vkCmdBlitImage(c, source->image, VK_IMAGE_LAYOUT_GENERAL, target->image,
+                   VK_IMAGE_LAYOUT_GENERAL, 1, &blit, VK_FILTER_NEAREST);
+    VkMemoryBarrier after = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT,
+                             VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                                 VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                                 VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                                 VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                                 VK_ACCESS_SHADER_READ_BIT};
+    dfn().vkCmdPipelineBarrier(c, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
+                               1, &after, 0, nullptr, 0, nullptr);
+  }
+}
+
+RenderTarget* Renderer::Impl::CreateOrGetRenderTarget(const RenderTargetKey& key, uint32_t min_height) {
   min_height = std::clamp(min_height, 16u, 2048u);
   auto it = render_targets.find(key);
   RenderTarget* old = nullptr;
@@ -2481,6 +2566,10 @@ RenderTarget* Renderer::Impl::GetRenderTarget(const RenderTargetKey& key, uint32
   rt->format = key.is_depth ? DepthFormatFor(key.format)
                             : ColorFormatToVk(xenos::ColorRenderTargetFormat(key.format));
   rt->last_used_frame = frame;
+  if (old) {
+    rt->alias_seq = old->alias_seq;
+    rt->synced_seq = old->synced_seq;
+  }
   VkImageCreateInfo info = {};
   info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
   info.imageType = VK_IMAGE_TYPE_2D;
@@ -2994,6 +3083,7 @@ bool Renderer::Impl::BuildDrawSetup(uint32_t initiator_value) {
     key.pitch = surface.pitch;
     key.format = uint32_t(color_info.color_format);
     key.msaa = msaa;
+    key.alias_msaa = AliasMsaa(guest_msaa);
     // The EDRAM below the base limits how tall the target can be.
     uint32_t pitch_tiles = (surface_info.surface_pitch * (guest_msaa >= 2 ? 2 : 1) + 79) / 80 *
                            (IsColorFormat64bpp(color_info.color_format) ? 2 : 1);
@@ -3017,6 +3107,7 @@ bool Renderer::Impl::BuildDrawSetup(uint32_t initiator_value) {
     key.pitch = surface.pitch;
     key.format = uint32_t(depth_info.depth_format);
     key.msaa = msaa;
+    key.alias_msaa = AliasMsaa(guest_msaa);
     key.is_depth = 1;
     uint32_t pitch_tiles = (surface_info.surface_pitch * (guest_msaa >= 2 ? 2 : 1) + 79) / 80;
     uint32_t rows = pitch_tiles ? (2048 - std::min(key.base_tiles, 2047u)) / pitch_tiles *
@@ -3784,6 +3875,19 @@ void Renderer::Impl::Draw(const uint32_t* immediate_indices, uint32_t immediate_
     last_system = {submission_number, 0, nullptr, frame, system_offset};
   }
 
+  // T15: a cached setup does not go through GetRenderTarget again.
+  if (!msaa_as_samples && !multisample) {
+    for (RenderTarget* t : {targets.color[0], targets.color[1], targets.color[2], targets.color[3],
+                            targets.depth}) {
+      if (!t) continue;
+      if (t->key.alias_msaa) {
+        t->alias_seq = ++alias_clock;
+      } else {
+        SyncAliasTarget(t);
+      }
+    }
+  }
+
   // Record.
   if (!BeginPass(targets, st.needed_height)) return skip(14);
   DrawCommand d;
@@ -3969,6 +4073,7 @@ void Renderer::Impl::Resolve() {
   RenderTargetKey source_key = {};
   source_key.pitch = surface.pitch;
   source_key.msaa = msaa;
+  source_key.alias_msaa = AliasMsaa(uint32_t(surface_info.msaa_samples));
   if (is_depth) {
     auto depth_info = r.Get<reg::RB_DEPTH_INFO>();
     source_key.base_tiles = depth_info.depth_base;
@@ -4245,6 +4350,7 @@ void Renderer::Impl::Resolve() {
       key.pitch = surface.pitch;
       key.format = uint32_t(depth_info.depth_format);
       key.msaa = msaa;
+      key.alias_msaa = AliasMsaa(uint32_t(surface_info.msaa_samples));
       key.is_depth = 1;
       depth_target = GetRenderTarget(key, uint32_t(host_rect[3]));
       clear_targets.depth = depth_target;

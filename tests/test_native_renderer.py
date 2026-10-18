@@ -41,3 +41,14 @@ def test_renderer_draws_msaa_surfaces_as_edram_samples():
     assert '#include "native_edram_samples.h"' in src
     assert 'REXCVAR_DEFINE_BOOL(gh3_native_msaa_as_samples, true' in src
     assert src.count("SurfaceFor(") >= 4  # draw, resolve, clear e as constantes de sistema
+
+
+def test_renderer_aliases_one_sample_msaa_surfaces_onto_the_1x_target():
+    # T15: com gh3_native_msaa_as_samples=false e 1 amostra, o palco 4x (pitch P) é desenhado em 1 amostra
+    # e sobe (blit nearest) para o alvo 1x de pitch 2P quando este é usado (draw, resolve, clear)
+    src = (ROOT / "src/native/native_renderer.cpp").read_text()
+    assert "edram::AliasBlitExtent(" in src
+    assert "SyncAliasTarget(" in src
+    assert "alias_msaa" in src
+    assert "uint64_t alias_seq" in src
+    assert "alias_msaa = AliasMsaa(" in src

@@ -61,6 +61,15 @@ REXCVAR_DEFINE_UINT32(gh3_guest_waits_after, 4, "GH3",
                       "Quantas leituras idênticas seguidas contam como giro");
 REXCVAR_DEFINE_UINT32(gh3_guest_waits_us, 100, "GH3",
                       "Microssegundos de sleep ao estabelecer o giro; 0 usa yield");
+#if defined(__SWITCH__)
+REXCVAR_DEFINE_BOOL(gh3_vblank_late_no_wait, true, "GH3",
+                    "Deixa um frame atrasado seguir na hora em vez de esperar o alvo+2 (dois ticks "
+                    "de 16,7 ms); frames no prazo continuam esperando");
+#else
+REXCVAR_DEFINE_BOOL(gh3_vblank_late_no_wait, false, "GH3",
+                    "Deixa um frame atrasado seguir na hora em vez de esperar o alvo+2 (dois ticks "
+                    "de 16,7 ms); frames no prazo continuam esperando");
+#endif
 REXCVAR_DEFINE_BOOL(gh3_guest_waits_stats, false, "GH3",
                     "Loga a contagem de cedências a cada 4096");
 
@@ -70,6 +79,11 @@ namespace gh3::guest_waits {
 // conferir que são os mesmos endereços que tools/llamadas_diretas.py mantém fora da reescrita.
 inline constexpr uint32_t kSwapCounter = 0x82172718;
 inline constexpr uint32_t kVblankCounter = 0x82172758;
+// sub_822BF0F8 (espera de vblank da Main): alvo do intervalo, e as duas leituras do contador.
+// A 1a (lr) detecta o atraso; a do laço (loop_lr) espera o alvo. Ver VblankLateSkip.
+inline constexpr uint32_t kVblankTarget = 0x82BF78A8;
+inline constexpr uint32_t kVblankLateReadLr = 0x822BF158;
+inline constexpr uint32_t kVblankLoopReadLr = 0x822BF188;
 
 // Parte pura em src/guest_waits_spin.h (SpinDetector).
 inline std::atomic<uint64_t> g_yields{0};
@@ -125,6 +139,18 @@ REX_HOOK_RAW(sub_82172718) {
 }
 
 REX_HOOK_RAW(sub_82172758) {
+  static thread_local gh3::guest_waits::VblankLateSkip late_skip;
+  const bool late_read =
+      REXCVAR_GET(gh3_vblank_late_no_wait) && ctx.lr == gh3::guest_waits::kVblankLateReadLr;
+  const bool loop_read =
+      REXCVAR_GET(gh3_vblank_late_no_wait) && ctx.lr == gh3::guest_waits::kVblankLoopReadLr;
   __imp__sub_82172758(ctx, base);
-  gh3::guest_waits::AfterRead(ctx.r3.u64);
+  const uint64_t counter = ctx.r3.u64;
+  if (late_read) {
+    late_skip.OnLateRead(counter, REX_LOAD_U64(gh3::guest_waits::kVblankTarget));
+  } else if (loop_read) {
+    const uint64_t target = REX_LOAD_U64(gh3::guest_waits::kVblankTarget);
+    if (late_skip.OnLoopRead(counter, target)) ctx.r3.u64 = target;
+  }
+  gh3::guest_waits::AfterRead(counter);
 }

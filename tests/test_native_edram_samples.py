@@ -14,6 +14,11 @@ int main(int argc, char** argv) {
   Surface s = HostSurface(pitch, msaa, as_samples, host_msaa);
   int32_t r[4] = {std::atoi(argv[5]), std::atoi(argv[6]), std::atoi(argv[7]), std::atoi(argv[8])};
   s.ScaleRect(r);
+  if (argc > 9) {  // AliasBlit: pitch da fonte (já 1 amostra), altura da fonte, alvo 1x (w, h)
+    AliasBlit b = AliasBlitExtent(msaa, pitch, std::atoi(argv[9]), std::atoi(argv[10]), std::atoi(argv[11]));
+    std::printf("%d %u %u %u %u\n", int(b.valid), b.src_w, b.src_h, b.dst_w, b.dst_h);
+    return 0;
+  }
   std::printf("%u %u %u %u %d %d %d %d\n", s.pitch, s.msaa, s.scale_x, s.scale_y, r[0], r[1], r[2], r[3]);
 }
 """
@@ -59,3 +64,28 @@ def test_without_samples_as_pixels_keeps_the_old_keys(tmp_path):
     exe = build(tmp_path)
     assert out(exe, 640, M4X, False, True) == [640, M4X, 1, 1, 8, 16, 640, 360]
     assert out(exe, 640, M4X, False, False) == [640, 0, 1, 1, 8, 16, 640, 360]
+
+
+def alias_blit(exe, guest_msaa, src_pitch, src_h, dst_w, dst_h):
+    args = [src_pitch, guest_msaa, 0, 0, 0, 0, 0, 0, src_h, dst_w, dst_h]
+    return [int(v) for v in subprocess.run([str(exe), *map(str, args)], capture_output=True, text=True,
+                                           check=True).stdout.split()]
+
+
+def test_alias_blit_scales_one_sample_stage_up_to_the_1x_target(tmp_path):
+    # T15: palco 4x de pitch 640 desenhado com 1 amostra (640x1024) sobe 2x2 para o alvo 1x 1280x720,
+    # cortado pela altura do destino (720/2 = 360 linhas da fonte)
+    exe = build(tmp_path)
+    assert alias_blit(exe, M4X, 640, 1024, 1280, 720) == [1, 640, 360, 1280, 720]
+    # profundidade: 1328 linhas no destino, a fonte tem 672 -> 664
+    assert alias_blit(exe, M4X, 640, 672, 1280, 1328) == [1, 640, 664, 1280, 1328]
+    # fonte menor que o destino: não passa dela
+    assert alias_blit(exe, M4X, 640, 100, 1280, 720) == [1, 640, 100, 1280, 200]
+
+
+def test_alias_blit_2x_only_doubles_height_and_1x_has_nothing_to_alias(tmp_path):
+    exe = build(tmp_path)
+    assert alias_blit(exe, M2X, 1280, 400, 1280, 720) == [1, 1280, 360, 1280, 720]
+    assert alias_blit(exe, M1X, 1280, 400, 1280, 720)[0] == 0
+    # destino mais estreito que a fonte escalada: corta a largura
+    assert alias_blit(exe, M4X, 640, 400, 1000, 720) == [1, 500, 360, 1000, 720]

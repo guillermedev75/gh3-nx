@@ -101,7 +101,10 @@ def main(argv):
     flags = ["--log_level", "debug", f"--input_json_file={pathlib.Path(a.script).resolve()}"]
     if a.renderer == "native":
         flags.append("--gh3_renderer=native")
-    cmd = (a.cmd or [str(ROOT / "run-gh3.command")]) + flags
+    # só flags depois de `--` são cvars extras para o jogo padrão (como em gameplay_capture.py)
+    own_cmd = [] if a.cmd and a.cmd[0].startswith("-") else a.cmd
+    extra = a.cmd if a.cmd and a.cmd[0].startswith("-") else []
+    cmd = (own_cmd or [str(ROOT / "run-gh3.command")]) + flags + extra
     env = dict(os.environ, GH3_LOG_FILE=str(log))
     env.setdefault("GH3_BUILD_DIR", BUILD_DIR)
 
