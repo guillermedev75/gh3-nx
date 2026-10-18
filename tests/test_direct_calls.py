@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
-from llamadas_diretas import rewrite  # noqa: E402
+from llamadas_diretas import HOOKED, rewrite  # noqa: E402
 
 
 def test_bl_vira_chamada_direta():
@@ -39,8 +39,34 @@ def test_codigo_gerado_sem_chamada_via_wrapper():
     files = glob.glob(str(ROOT / "generated" / "default" / "gh3_recomp.*.cpp"))
     if not files:
         return  # checkout sem codegen
-    pat = re.compile(r"^\s+sub_[0-9A-Fa-f]+\(ctx, base\);", re.M)
-    assert sum(len(pat.findall(Path(f).read_text())) for f in files) == 0
+    pat = re.compile(r"^\s+sub_([0-9A-Fa-f]+)\(ctx, base\);", re.M)
+    leftover = [
+        name
+        for f in files
+        for name in pat.findall(Path(f).read_text())
+        if int(name, 16) not in HOOKED
+    ]
+    assert leftover == []
+
+
+def test_funcao_hookada_continua_via_simbolo_fraco():
+    # O gancho forte substitui `sub_X`; `__imp__sub_X` iria direto ao corpo e o gancho nunca rodaria.
+    for addr in HOOKED:
+        name = f"sub_{addr:08X}"
+        src = f"\t__imp__{name}(ctx, base);\n"
+        assert rewrite(src) == f"\t{name}(ctx, base);\n"
+
+
+def test_hookadas_no_gerado_ficam_em_sub_e_o_resto_em_imp():
+    files = glob.glob(str(ROOT / "generated" / "default" / "gh3_recomp.*.cpp"))
+    if not files:
+        return
+    text = "".join(Path(f).read_text() for f in files)
+    for addr in HOOKED:
+        name = f"sub_{addr:08X}"
+        assert re.search(rf"^\s+__imp__{name}\(ctx, base\);", text, re.M) is None
+        assert re.search(rf"^\s+{name}\(ctx, base\);", text, re.M) is not None
+
 
 
 def test_lto_ligado_no_switch():

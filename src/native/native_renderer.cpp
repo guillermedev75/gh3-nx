@@ -80,6 +80,13 @@ REXCVAR_DEFINE_BOOL(gh3_native_msaa_as_samples, true, "GH3",
                     "Draw multisampled surfaces as their EDRAM samples, into the single-sampled "
                     "target that shares that EDRAM (4x at pitch P = 1x at pitch 2P), as the game "
                     "clears its targets; overrides gh3_native_msaa");
+REXCVAR_DEFINE_BOOL(gh3_native_zcull, false, "GH3",
+                    "Clear the depth attachment on its first pass of the frame instead of loading it: "
+                    "NVK only enables ZCULL (skip hidden pixels) when the depth loadOp is CLEAR");
+REXCVAR_DEFINE_BOOL(gh3_native_alias_cap, true, "GH3",
+                    "Cap a full-EDRAM 4x alias draw to half the EDRAM rows: the game clears its 1x "
+                    "target through the alias, and the default 8192 scissor used to make the shared "
+                    "1280 target 2048 rows tall");
 REXCVAR_DEFINE_BOOL(gh3_native_async_pipelines, true, "GH3",
                     "Native renderer: compile new pipelines on a worker thread and skip the "
                     "draws that need them until they are ready, instead of stalling the frame");
@@ -239,6 +246,8 @@ struct RenderTarget {
   uint32_t width = 0;
   uint32_t height = 0;
   uint64_t last_used_frame = 0;
+  // Frame in which the depth was last cleared by the pass (gh3_native_zcull).
+  uint64_t cleared_frame = ~uint64_t(0);
 };
 
 // The attachments of a rendering scope: color 0-3 and depth.
@@ -374,6 +383,10 @@ struct Renderer::Impl {
   // Multisampled surfaces as their samples (gh3_native_msaa_as_samples,
   // native_edram_samples.h): wins over multisample.
   bool msaa_as_samples = true;
+  // gh3_native_alias_cap (ver o cvar).
+  bool alias_cap = true;
+  // gh3_native_zcull (ver o cvar).
+  bool zcull = false;
   // D24_UNORM_S8_UINT for the game's kD24S8 buffers (gh3_native_depth24).
   bool depth24 = false;
   // The float24 ones (here only shadow maps) become D32_SFLOAT without
@@ -598,6 +611,7 @@ struct Renderer::Impl {
     draw_util::Scissor scissor = {};
     draw_util::ViewportInfo viewport = {};
     PassTargets targets;
+    uint32_t needed_height = 0;
     const PipelineLayout* layout = nullptr;
     uint32_t counts[4] = {};
     VkPipeline pipeline = VK_NULL_HANDLE;
@@ -1335,7 +1349,7 @@ struct Renderer::Impl {
       in_pass = false;
     }
   }
-  bool BeginPass(const PassTargets& targets);
+  bool BeginPass(const PassTargets& targets, uint32_t wanted_height = UINT32_MAX);
 
   // --- Draws ---------------------------------------------------------------------
 
@@ -1374,6 +1388,8 @@ bool Renderer::Impl::Initialize() {
   specialize_signs = REXCVAR_GET(gpu_specialize_texture_signs);
   multisample = REXCVAR_GET(gh3_native_msaa);
   msaa_as_samples = REXCVAR_GET(gh3_native_msaa_as_samples);
+  alias_cap = REXCVAR_GET(gh3_native_alias_cap);
+  zcull = REXCVAR_GET(gh3_native_zcull);
   ubo_alignment = std::max<VkDeviceSize>(properties.minUniformBufferOffsetAlignment, 16);
 
   translator = std::make_unique<SpirvShaderTranslator>(SpirvShaderTranslator::Features(device),
@@ -1823,7 +1839,8 @@ void Renderer::Impl::ProfileReport() {
     std::string what;
     switch (key >> 60) {
       case kProfilePass:
-        what = fmt::format("pass c={} d={}", target((key >> 24) & 0xFFFFFF), target(key & 0xFFFFFF));
+        what = fmt::format("pass h{} c={} d={}", (key >> 48) & 0xFFF,
+                           target((key >> 24) & 0xFFFFFF), target(key & 0xFFFFFF));
         break;
       case kProfileResolve:
         what = fmt::format("resolve{} p{} {}x{}", ((key >> 56) & 1) ? " depth" : "",
@@ -2568,11 +2585,22 @@ RenderTarget* Renderer::Impl::GetRenderTarget(const RenderTargetKey& key, uint32
   return result;
 }
 
-bool Renderer::Impl::BeginPass(const PassTargets& targets) {
+bool Renderer::Impl::BeginPass(const PassTargets& targets, uint32_t wanted_height) {
+  // The render area is the attachment size capped by what this draw can touch,
+  // not the whole attachment: one full-EDRAM draw (the game's 4x alias with the
+  // default 8192 scissor) used to grow the shared 1280 target to 2048 rows and
+  // every 720-row stage draw then paid for 2048. Same targets but a different
+  // height is a new scope; loadOp=LOAD keeps the contents.
+  uint32_t height_cap = UINT32_MAX;
+  for (uint32_t i = 0; i < 4; ++i) {
+    if (targets.color[i]) height_cap = std::min(height_cap, targets.color[i]->height);
+  }
+  if (targets.depth) height_cap = std::min(height_cap, targets.depth->height);
+  const uint32_t wanted = std::min(wanted_height, height_cap);
   if (in_pass) {
     // Keep the scope if every attachment the draw needs is already bound at
-    // the same slot.
-    bool compatible = true;
+    // the same slot and covers the same rows.
+    bool compatible = wanted == pass_extent.height;
     for (uint32_t i = 0; i < 4; ++i) {
       if (targets.color[i] && targets.color[i] != pass.color[i]) compatible = false;
     }
@@ -2583,8 +2611,6 @@ bool Renderer::Impl::BeginPass(const PassTargets& targets) {
     EndPass();
   }
   FlushResolveBarrier();
-  ProfileMark((kProfilePass << 60) | (ProfileTargetBits(targets.color[0]) << 24) |
-              ProfileTargetBits(targets.depth));
   pass = targets;
   VkRenderingAttachmentInfo colors[4] = {};
   uint32_t color_count = 0;
@@ -2607,6 +2633,13 @@ bool Renderer::Impl::BeginPass(const PassTargets& targets) {
     depth.imageView = targets.depth->view;
     depth.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    if (zcull && targets.depth->cleared_frame != frame) {
+      // ZCULL: NVK enables it for a depth attachment loaded with CLEAR (nvk_cmd_draw.c).
+      // Only the first pass of the frame, so later passes keep what was drawn.
+      depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+      depth.clearValue.depthStencil = {1.0f, 0};
+      targets.depth->cleared_frame = frame;
+    }
     depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     width = std::min(width, targets.depth->width);
     height = std::min(height, targets.depth->height);
@@ -2614,6 +2647,7 @@ bool Renderer::Impl::BeginPass(const PassTargets& targets) {
   if (width == UINT32_MAX) {
     return false;
   }
+  height = std::min(height, wanted);
   VkRenderingInfo info = {};
   info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
   info.renderArea.extent = {width, height};
@@ -2624,6 +2658,8 @@ bool Renderer::Impl::BeginPass(const PassTargets& targets) {
   info.pStencilAttachment =
       targets.depth && HasStencil(targets.depth->format) ? &depth : nullptr;
   dfn().vkCmdBeginRendering(cmd(), &info);
+  ProfileMark((kProfilePass << 60) | ((uint64_t(height) & 0xFFF) << 48) |
+              (ProfileTargetBits(targets.color[0]) << 24) | ProfileTargetBits(targets.depth));
   in_pass = true;
   pass_extent = {width, height};
   ++stats().render_passes;
@@ -2945,6 +2981,7 @@ bool Renderer::Impl::BuildDrawSetup(uint32_t initiator_value) {
     needed_height =
         std::min(needed_height, st.viewport.xy_offset[1] + st.viewport.xy_extent[1]);
   }
+  st.needed_height = needed_height;
   PassTargets& targets = st.targets;
   for (uint32_t i = 0; i < 4; ++i) {
     if (!((color_mask >> (4 * i)) & 0xF)) continue;
@@ -2960,7 +2997,15 @@ bool Renderer::Impl::BuildDrawSetup(uint32_t initiator_value) {
     uint32_t rows = pitch_tiles ? (2048 - std::min(key.base_tiles, 2047u)) / pitch_tiles *
                                       (guest_msaa >= 1 ? 8 : 16) * surface.scale_y
                                 : 2048;
-    targets.color[i] = GetRenderTarget(key, std::min(needed_height, rows));
+    uint32_t color_height = std::min(needed_height, rows);
+    // A 4x alias with the default 8192 scissor means "the whole EDRAM": the game uses it to
+    // clear the 1x target at pitch 2P. Half the EDRAM rows covers that target (and the stage's
+    // explicit 720) without making every pass pay for 2048.
+    if (alias_cap && msaa_as_samples && guest_msaa >= 2 && surface.scale_y > 1 &&
+        st.scissor.extent[1] >= 8192) {
+      color_height = std::min(color_height, rows / surface.scale_y);
+    }
+    targets.color[i] = GetRenderTarget(key, color_height);
   }
   if (depth_used) {
     auto depth_info = r.Get<reg::RB_DEPTH_INFO>();
@@ -3737,7 +3782,7 @@ void Renderer::Impl::Draw(const uint32_t* immediate_indices, uint32_t immediate_
   }
 
   // Record.
-  if (!BeginPass(targets)) return skip(14);
+  if (!BeginPass(targets, st.needed_height)) return skip(14);
   DrawCommand d;
   d.commands = current().main;
   d.flags = 0;

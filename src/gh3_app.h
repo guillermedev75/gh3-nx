@@ -18,6 +18,8 @@
 #include <spdlog/sinks/base_sink.h>
 
 #include "dump_gate.h"
+#include "frame_stats.h"
+#include "guest_waits.h"
 #include "mark_screenshot.h"
 #include "parity_capture.h"
 #include "present_counter.h"
@@ -35,6 +37,7 @@ extern "C" rex::system::IGraphicsSystem* rex_gpu_create(uint32_t abi_version,
 
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
 #include <rex/graphics/pipeline/texture/util.h>
 #include <vector>
 #include <fstream>
@@ -99,6 +102,11 @@ class Gh3App : public rex::ReXApp {
   // do roteiro pedida em --mark_screenshot (src/mark_screenshot.h), que vira mark_<nome>_<modo>.png.
   void OnPostSetup() override {
     parity_capture_.Start(runtime());
+    // FPS no overlay de debug (F3 no PC, L+R+Cima no Switch). Sem provider a caixa abre vazia: o SDK não
+    // conta quadros sozinho (src/frame_stats.h).
+    SetGuestFrameStats([this] { return MuestreaFotograma(); });
+    // Esperas ativas (swap/vblank) cedem o núcleo em vez de girar (src/guest_waits.h).
+    gh3::guest_waits::Install(runtime());
     std::string marks = REXCVAR_GET(mark_screenshot);
     if (!marks.empty()) {
       rexglue_script_input::SetMarkObserver(
@@ -158,6 +166,23 @@ class Gh3App : public rex::ReXApp {
     }
   }
 
+  // Quadros contados desde o início: o renderer nativo conta os swaps que apresentou
+  // (gh3::native::SwapsPresented, sem depender do log); o emulado cai no present_counter, que lê as linhas
+  // REXGPU_DEBUG (só existem com --log_level debug). Ver src/frame_stats.h.
+  rex::ui::FrameStats MuestreaFotograma() {
+    uint64_t total = 0;
+#if GH3_NATIVE_RENDERER
+    if (gh3::native::Enabled()) total = gh3::native::SwapsPresented();
+#endif
+    if (total == 0) total = gh3::present_counter::Count();
+    const double now_ms = std::chrono::duration<double, std::milli>(
+                              std::chrono::steady_clock::now().time_since_epoch())
+                              .count();
+    const gh3::frame_stats::Stats s = frame_sampler_.Sample(total, now_ms);
+    return rex::ui::FrameStats{s.frame_time_ms, s.fps, s.frame_count};
+  }
+
  private:
   parity_capture::ParityCapture parity_capture_;
+  gh3::frame_stats::Sampler frame_sampler_;
 };
