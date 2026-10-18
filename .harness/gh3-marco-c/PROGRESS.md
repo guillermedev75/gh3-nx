@@ -150,3 +150,25 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - decisões: PGO desligado (o perfil gravado é local e específico do build); o `out/driver-sdk` tem o patch do ZCULL, mas `gh3_native_zcull=false` no toml; T16 a 0.75 e o modo desempenho (sem sombra/bloom) ligados no `switch/gh3.toml`.
 - pendente: medição no Switch fica com o humano; T17/T19 bloqueadas.
 - 2026-10-18 05:16 T20 ✅ aceita
+
+
+### T21 — tentativa 1
+- feito: levantamento do caminho de shader e das bibliotecas. Nada alterado.
+- verificado: o SDK **não constrói** o spirv-tools: `sdk/thirdparty/CMakeLists.txt` só expõe `spirv-tools-headers` (INTERFACE); o `libSPIRV.a` de `sdk/out/{mac,switch}-arm64` é o SPIRV do **glslang** (822 KB/1 MB, 0 símbolos `spvtools::Optimizer`). O `VulkanTranslation::translated_binary()` é `const std::vector<uint8_t>&` e o `shader_module_` é privado no SDK; integrar exigiria criar o módulo otimizado no nosso renderer (mapa translation→VkShaderModule) e validar/fallback.
+- decisões: bloqueada nesta sessão por escopo: precisa (a) de um patch local no SDK (mecanismo do `setup_sdk.sh` é da série do project8-sw) para `add_subdirectory(spirv-tools)` e construir `SPIRV-Tools`/`SPIRV-Tools-opt` no Mac e no devkitA64; (b) linkar/instalar as libs nos dois builds; (c) integrar o otimizador no caminho de módulo. Além disso, o gargalo medido é fill-rate (passe principal 720p + sombra/bloom; GPU 13 ms no modo desempenho), não ALU — o ganho de spirv-opt é incerto e não move FPS enquanto os pixels dominarem. Multi-hora; fica para a próxima sessão com contexto novo.
+- pendente: implementar com o harness do aceite (teste + captura + log). Sem ganho garantido.
+- 2026-10-18 05:21 T21 [!] bloqueada (build/escopo; ganho incerto)
+
+### T22 — tentativa 1
+- feito: nada alterado.
+- verificado: o compilador de shaders do driver (NAK) **não suporta FP16 nem VRS** nesta GPU — medido e documentado pelo nfsmw-nx (`docs/porting-another-game.md`, "What did not work": "Half-precision math at double speed (FP16) and variable rate shading: the shader compiler, NAK, does not support them on this GPU"). O próprio detalhe do T22 manda documentar e bloquear se o NVK não honrar.
+- decisões: bloqueada pela limitação do driver, sem código.
+- pendente: reavaliar se o NAK ganhar suporte a FP16.
+- 2026-10-18 05:21 T22 [!] bloqueada (NAK sem FP16)
+
+### T23 — tentativa 1
+- feito: nada alterado.
+- verificado: depende de T21 (spirv-opt) e T22 (FP16), ambas bloqueadas; o aceite pede as strings dos dois no NRO.
+- decisões: bloqueada por dependência. O pacote atual (T20) já contém T16-T18 e o log do anel.
+- pendente: refazer quando T21/T22 saírem.
+- 2026-10-18 05:21 T23 [!] bloqueada (depende de T21/T22)
