@@ -1,9 +1,10 @@
 """T13: as esperas ativas do jogo cedem o núcleo em vez de girar (src/guest_waits.h).
 
-Três conferências:
-  1. o detector puro (src/guest_waits_spin.h) compilado sozinho, sem SDK;
+Conferências:
+  1. o detector puro (src/guest_waits_spin.h) compilado sozinho, sem SDK — inclusive o
+     "late no wait" do vblank;
   2. os endereços hookados são os mesmos que tools/llamadas_diretas.py mantém fora da reescrita;
-  3. no gerado, os accessors nesses endereços continuam sendo as folhas que leem os contadores.
+  3. no gerado, os accessors/laços nesses endereços continuam sendo os que o gancho espera.
 """
 import glob
 import re
@@ -21,8 +22,24 @@ MAIN = r"""
 #include "guest_waits_spin.h"
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 using namespace gh3::guest_waits;
 int main(int argc, char** argv) {
+  if (!std::strcmp(argv[1], "late")) {
+    VblankLateSkip s;
+    for (int i = 2; i + 2 < argc; i += 3) {
+      const char op = argv[i][0];
+      const unsigned long long c = std::strtoull(argv[i + 1], nullptr, 10);
+      const unsigned long long t = std::strtoull(argv[i + 2], nullptr, 10);
+      if (op == 'L') {
+        s.OnLateRead(c, t);
+      } else {
+        std::printf("%d", s.OnLoopRead(c, t) ? 1 : 0);
+      }
+    }
+    std::printf("\n");
+    return 0;
+  }
   const unsigned after = std::atoi(argv[1]);
   SpinDetector d;
   for (int i = 2; i + 1 < argc; i += 2) {
@@ -64,11 +81,49 @@ def test_after_one_yields_on_every_repeat(tmp_path):
     assert run(build(tmp_path), 1, 7, 4) == "0111"
 
 
+def test_late_frame_is_let_through(tmp_path):
+    exe = build(tmp_path)
+    # L 120 110: o contador passou o alvo (atrasado) -> a leitura do laço devolve o alvo.
+    assert run(exe, "late", "L", 120, 110, "W", 111, 113) == "1"
+
+
+def test_on_time_frame_still_waits(tmp_path):
+    exe = build(tmp_path)
+    # L 100 110: contador antes do alvo -> não atrasado; o laço espera normalmente.
+    assert run(exe, "late", "L", 100, 110, "W", 101, 111) == "0"
+
+
+def test_late_flag_is_consumed(tmp_path):
+    exe = build(tmp_path)
+    # primeiro W solta (1); o segundo já não tem atraso pendente (0).
+    assert run(exe, "late", "L", 120, 110, "W", 111, 113, "W", 112, 113) == "10"
+
+
 def test_hooked_addresses_match_the_header():
     text = (ROOT / "src" / "guest_waits.h").read_text()
     swap = int(re.search(r"kSwapCounter = 0x([0-9A-Fa-f]+)", text).group(1), 16)
     vblank = int(re.search(r"kVblankCounter = 0x([0-9A-Fa-f]+)", text).group(1), 16)
     assert {swap, vblank} == HOOKED
+
+
+def test_vblank_late_addresses_match_the_generated_loop():
+    text = (ROOT / "src" / "guest_waits.h").read_text()
+    target = int(re.search(r"kVblankTarget = 0x([0-9A-Fa-f]+)", text).group(1), 16)
+    late_lr = int(re.search(r"kVblankLateReadLr = 0x([0-9A-Fa-f]+)", text).group(1), 16)
+    loop_lr = int(re.search(r"kVblankLoopReadLr = 0x([0-9A-Fa-f]+)", text).group(1), 16)
+    # lis r31,-32065 (0x82BF0000) + ld r11,30888(r31)
+    assert target == 0x82BF0000 + 30888
+    assert (late_lr, loop_lr) == (0x822BF158, 0x822BF188)
+    bodies = []
+    for f in glob.glob(str(ROOT / "generated" / "default" / "gh3_recomp.*.cpp")):
+        body = Path(f).read_text()
+        if "DEFINE_REX_FUNC(sub_822BF0F8)" in body:
+            bodies.append(body)
+    if not bodies:  # checkout sem codegen
+        return
+    body = bodies[0]
+    assert "ctx.lr = 0x822BF158;" in body and "ctx.lr = 0x822BF188;" in body
+    assert "ld r11,30888(r31)" in body and "lis r31,-32065" in body
 
 
 def _bodies():
