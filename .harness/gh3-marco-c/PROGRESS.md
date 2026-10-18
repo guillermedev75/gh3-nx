@@ -142,3 +142,11 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - decisões: bloqueada — grande demais para reescrever com confiança e verificação bit a bit nesta sessão: `fmadds` arredonda uma vez (C `a*b+c` arredonda duas; teria que usar `std::fma` em cada um), 147 acessos à memória do guest e o harness de verificação teria que reproduzir a semântica exata do original. Além disso, o ganho de FPS é zero enquanto a GPU for o limite (playbook §8: modo desempenho, GPU ~13 ms, FPS ~45, threads esperando). Risco alto para ganho não mensurável.
 - pendente: reescopo quando a GPU deixar de ser o limite, ou uma função quente menor; o `gh3_hot_math_verify` do plano pode ser reusado.
 - 2026-10-18 05:06 T19 [!] bloqueada (grande demais / GPU é o limite)
+
+
+### T20 — tentativa 1
+- feito: build do Switch no Docker com `-DGH3_PGO=` (PGO desligado no release; o `.gcda` fica em `out/pgo`, fora do git), NRO `0x3aa1000`; ELF guardado em `out/elf/gh3-7d12d79.elf`; `tools/make_sd_package.sh --nro build/switch/gh3.nro` → `out/sd/switch/gh3-nx` (3 arquivos); strings com "scene scale" e "present ring".
+- verificado: aceite exit 0 — `check_nro` OK, os dois greps OK, o NRO do pacote é mais novo que `src/native/native_renderer.cpp`, `check_no_game_content.sh out/sd` = limpo.
+- decisões: PGO desligado (o perfil gravado é local e específico do build); o `out/driver-sdk` tem o patch do ZCULL, mas `gh3_native_zcull=false` no toml; T16 a 0.75 e o modo desempenho (sem sombra/bloom) ligados no `switch/gh3.toml`.
+- pendente: medição no Switch fica com o humano; T17/T19 bloqueadas.
+- 2026-10-18 05:16 T20 ✅ aceita
