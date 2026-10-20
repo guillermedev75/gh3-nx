@@ -7,8 +7,13 @@ MAIN = r"""
 #include "native_edram_samples.h"
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 using namespace gh3::native::edram;
 int main(int argc, char** argv) {
+  if (!std::strcmp(argv[1], "h")) {
+    std::printf("%u\n", AliasHeight(std::atoi(argv[2]), std::atoi(argv[3])));
+    return 0;
+  }
   uint32_t pitch = std::atoi(argv[1]), msaa = std::atoi(argv[2]);
   bool as_samples = argv[3][0] == '1', host_msaa = argv[4][0] == '1';
   Surface s = HostSurface(pitch, msaa, as_samples, host_msaa);
@@ -70,6 +75,20 @@ def alias_blit(exe, guest_msaa, src_pitch, src_h, dst_w, dst_h):
     args = [src_pitch, guest_msaa, 0, 0, 0, 0, 0, 0, src_h, dst_w, dst_h]
     return [int(v) for v in subprocess.run([str(exe), *map(str, args)], capture_output=True, text=True,
                                            check=True).stdout.split()]
+
+
+def alias_height(exe, full_h, guest_msaa):
+    return int(subprocess.run([str(exe), "h", str(full_h), str(guest_msaa)], capture_output=True,
+                              text=True, check=True).stdout.strip())
+
+
+def test_alias_height_is_the_1x_target_split_by_the_sample_stack(tmp_path):
+    # T24: o alias 4x so precisa das linhas que o blit usa (altura do 1x / 2)
+    exe = build(tmp_path)
+    assert alias_height(exe, 720, M4X) == 360
+    assert alias_height(exe, 180, M4X) == 90
+    assert alias_height(exe, 1328, M4X) == 664
+    assert alias_height(exe, 720, M1X) == 720
 
 
 def test_alias_blit_scales_one_sample_stage_up_to_the_1x_target(tmp_path):

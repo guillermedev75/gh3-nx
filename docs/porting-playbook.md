@@ -180,3 +180,23 @@ Outras peças desta fase:
 Lição de processo: **dois agentes na mesma worktree se misturam.** O OpenCode/DeepSeek trabalhou em paralelo ao
 harness, e o `git add -A` do harness levou o trabalho dele para dentro dos commits T13/T14/T15 (PGO no commit do
 T14, `vblank_late_no_wait` no do T15). Um agente por worktree; o outro usa a sua.
+
+### Pesquisa de portes (2026-10-19)
+
+Relatório completo em `docs/render-research-2026-10-19.md` (5 frentes, prioridades P0–P3, com fontes).
+Resumo acionável:
+
+- O 360 tem ~256 GB/s de eDRAM; o Tegra X1 handheld ~21,3 GB/s. O gargalo é **fragment shading/overdraw/
+  passes de tela cheia**, não FLOPs (~236 vs ~240 GFLOPS). Emular a eDRAM é o que derruba o backend Xenos.
+- Próximas alavancas: dynamic resolution 0.5–0.75 com histerese + CAS; shaders/NAK (`spirv-opt`,
+  `max(a,a)`, `textureSize`); resolve sem cópia só com restauração e paridade; present ring (3 slots, 1
+  submit/frame — o renderer já tem 4 **work** slots, não confundir); overdraw exato (blend 0×/1×, alpha
+  NEVER, `EarlyFragmentTests` só sem Z-write).
+- Becos sem saída medidos/documentados: ZCULL sem o pacote completo, `vblank late-no-wait` como FPS,
+  baixar resolução sozinho, FP16/VRS (NAK/GM20B), AFBC, depth prepass, occlusion queries, FSR2, 4º work
+  slot, thread de apresentação, EDS 1/2/3, sombra a cada N frames.
+- Correção antes de otimização: instrumente swap/RT key/clear/resolve/fence; os flashes de cor do ReXGlue
+  (#508/#513) e do ProjectTM vêm de ownership/formato/present, não de shader.
+- **T24:** alvos pequenos (sombra/efeito) eram criados com 2048 linhas por scissor default; o cap pela
+  altura real do alvo 1x (`known_1x_height`/`AliasHeight`) reduz o render area sem mudar a imagem.
+- **Fallback verde** do guest output trocado por preto (piscadas entre telas).

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-17
-updated: 2026-10-18
+updated: 2026-10-19
 ---
 
 # 2026-10-17 — Marco A: GH3 roda no Mac com imagem e som
@@ -61,3 +61,23 @@ Estado: o `default.xex` (USA/Europa multi 5) recompilado roda no macOS arm64 com
   `switch/gh3.toml` (`053423d`).
 - Próxima fila (pedida pelo Guillerme, itens 3–5): 3D em resolução menor que a HUD; apresentação sem esperar a GPU
   (command buffers em rodízio); funções quentes do jogo em C++ nativo.
+
+## 2026-10-19 — pesquisa de render, T24 (alvos 2048) e fallback verde
+
+- **Pesquisa de portes** (5 frentes: refs nfsmw/project8, ReXGlue/Xenia, portes NFS, GTA/RAGE, Tegra/NVK):
+  relatório em `docs/render-research-2026-10-19.md`. O 360 vence por **eDRAM (~256 GB/s)** contra os
+  **~21,3 GB/s** do Tegra X1 handheld, não por FLOPs (~236 vs ~240 GFLOPS): o gargalo é sombrear
+  fragmentos/overdraw/passes de tela cheia. Próximas alavancas: dynamic resolution 0.5–0.75 + CAS,
+  shaders/NAK, resolve sem cópia (com restauração), present ring e overdraw exato. ZCULL, late-no-wait,
+  FP16/VRS, AFBC, depth prepass, occlusion queries, FSR2 e 4º work slot já se mostraram becos sem saída.
+- **T24 (achado):** o alvo de sombra/efeito era criado com **2048 linhas** (4 draws com scissor default,
+  4–6 ms) — a mesma inflação do alvo principal. O cap agora usa a altura real do alvo 1x
+  (`known_1x_height` + `edram::AliasHeight`) no render area; capturas no Mac OK; medir no Switch.
+- **Piscadas verdes:** o fallback do renderer nativo limpava o guest output com a cor de teste verde
+  (`gh3_native_system.cpp`); trocado por preto. Se persistir, os suspeitos são present/ownership/formato
+  (ReXGlue #508/#513, ProjectTM), não o shading.
+- **Fila:** T16 implementação correta (menu 0,75 vs 1,0 mean_diff 0,7), mas o aceite de gameplay é não
+  determinístico (marca wall-clock vs animação por frame); T17 bloqueada (o fence único é o fallback);
+  **T18 aceita** (espera do anel da GPU dorme; `installed 3`); T19 bloqueada (1862 linhas, GPU-bound);
+  **T20 aceita** (NRO + pacote); T21–T23 bloqueadas (SDK sem spirv-tools; NAK sem FP16).
+- **Suíte:** 163 testes; `check_no_game_content` limpo.

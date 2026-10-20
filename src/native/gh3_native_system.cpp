@@ -1319,13 +1319,14 @@ class NativeGraphicsSystem final : public rex::system::IGraphicsSystem {
     if (dfn.vkBeginCommandBuffer(commands_, &begin) != VK_SUCCESS) {
       return false;
     }
-    // Test colour: green rises and falls with the swap count, so a capture
-    // tells a running game from a stalled one.
-    const float phase = float(swap % 240) / 239.0f;
+    // Fallback only: the renderer was not ready, so the guest output is cleared black. It used to
+    // be a green test colour that moved with the swap count; a guest output mailbox that kept it
+    // (a transition frame without a resolved frontbuffer) showed a green flash. The game is never
+    // black for long, and a stalled frame is better seen in the log than on screen.
     VkClearValue color{};
-    color.color.float32[0] = 0.05f;
-    color.color.float32[1] = 0.10f + 0.40f * phase;
-    color.color.float32[2] = 0.35f;
+    color.color.float32[0] = 0.0f;
+    color.color.float32[1] = 0.0f;
+    color.color.float32[2] = 0.0f;
     color.color.float32[3] = 1.0f;
     VkRenderPassBeginInfo pass{};
     pass.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;

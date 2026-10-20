@@ -14,6 +14,7 @@
 // sample pitch, and coordinates (viewport, scissor, resolve rectangles) are
 // scaled to it. Without, the old keys: the guest pitch, with host MSAA.
 
+#include <algorithm>
 #include <cstdint>
 
 namespace gh3::native::edram {
@@ -54,6 +55,13 @@ struct AliasBlit {
 
 // guest_msaa: log2 of the guest sample count of the 1-sample image (pitch src_pitch, src_height rows);
 // dst_width/dst_height: the size of the 1x target. The region is cut so the upscaled one fits.
+// Altura util da imagem 1 amostra de uma superficie 4x: a altura do alvo 1x dividida pelo
+// empilhamento vertical das amostras. O resto do alvo (ate 2048) e' lixo do scissor default.
+inline uint32_t AliasHeight(uint32_t full_height, uint32_t guest_msaa) {
+  const uint32_t scale_y = guest_msaa >= 1 ? 2 : 1;
+  return std::max(1u, full_height / scale_y);
+}
+
 inline AliasBlit AliasBlitExtent(uint32_t guest_msaa, uint32_t src_pitch, uint32_t src_height,
                                  uint32_t dst_width, uint32_t dst_height) {
   uint32_t scale_x = guest_msaa >= 2 ? 2 : 1;

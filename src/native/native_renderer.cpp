@@ -266,6 +266,8 @@ struct RenderTarget {
   uint32_t width = 0;
   uint32_t height = 0;
   uint64_t last_used_frame = 0;
+  // T24: altura que os draws 1x explicitos usam neste alvo (0 = ainda nao visto).
+  uint32_t known_1x_height = 0;
   // Frame in which the depth was last cleared by the pass (gh3_native_zcull).
   uint64_t cleared_frame = ~uint64_t(0);
   // T15: the 1-sample image of a multisampled surface counts its uses (alias_seq); the 1x target that
@@ -2628,6 +2630,18 @@ void Renderer::Impl::SyncSceneTarget(RenderTarget* target) {
 
 RenderTarget* Renderer::Impl::CreateOrGetRenderTarget(const RenderTargetKey& key, uint32_t min_height) {
   min_height = std::clamp(min_height, 16u, 2048u);
+  // T24: um alias 4x com o scissor default (8192) pede 2048 linhas, mas o alvo 1x que ele espelha
+  // tem a altura real (180-720). Capar o alias a essa altura corta o passe sem mudar o que aparece:
+  // o blit do alias (SyncAliasTarget) só usa as primeiras full/2 linhas.
+  if (alias_cap && key.alias_msaa) {
+    RenderTargetKey full_key = key;
+    full_key.alias_msaa = 0;
+    auto fit = render_targets.find(full_key);
+    const uint32_t cap = fit != render_targets.end()
+                             ? edram::AliasHeight(fit->second->height, key.alias_msaa)
+                             : 1024u;
+    min_height = std::min(min_height, std::max(16u, cap));
+  }
   // T16: a imagem escalada da cena; min_height continua em pixels do jogo.
   const bool scaled = key.scene_scaled && scene::Enabled(scene_scale);
   auto it = render_targets.find(key);
@@ -3221,6 +3235,31 @@ bool Renderer::Impl::BuildDrawSetup(uint32_t initiator_value) {
                     st.viewport.z_min, st.viewport.z_max, color_mask);
       }
     }
+  }
+  // T24: os draws 1x com scissor explicito revelam a altura real do alvo (180-720). Guardar no
+  // alvo para que os draws 4x com scissor default (8192) nao paguem 2048 linhas na proxima volta.
+  if (guest_msaa == 0 && st.scissor.extent[1] < 8192) {
+    for (RenderTarget* rt : targets.color) {
+      if (rt) rt->known_1x_height = std::max(rt->known_1x_height, needed_height);
+    }
+    if (targets.depth) {
+      targets.depth->known_1x_height = std::max(targets.depth->known_1x_height, needed_height);
+    }
+  }
+  // O cap do render area dos draws 4x: no modo samples-as-pixels o alvo e' 1x (altura cheia);
+  // no alias do T15 a imagem 4x so precisa da altura do 1x dividida pelo empilhamento (2).
+  if (guest_msaa >= 2 && st.scissor.extent[1] >= 8192 && targets.color[0]) {
+    uint32_t useful = 0;
+    if (msaa_as_samples) {
+      useful = targets.color[0]->known_1x_height;
+    } else {
+      RenderTargetKey full_key = targets.color[0]->key;
+      full_key.alias_msaa = 0;
+      auto fit = render_targets.find(full_key);
+      if (fit != render_targets.end()) useful = fit->second->known_1x_height;
+      if (useful) useful = std::max(16u, useful / 2);
+    }
+    if (useful) st.needed_height = std::min(st.needed_height, useful);
   }
   // Creating a render target above bumped rt_generation; this setup is built
   // against the new ones.
