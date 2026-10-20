@@ -1,11 +1,16 @@
 # Configuração do harness-loop (lida com `source`). Números inteiros.
+# Agente: OpenCode + DeepSeek via OpenRouter (wrapper que lê o prompt do stdin). O runner continua
+# sendo quem commita, roda o oráculo e o aceite. As permissões (sem git commit/push) estão em opencode.json.
+CLAUDE_BIN="$RUN_DIR/opencode-agent.sh"
+HARNESS_MODEL=''
+HARNESS_DEEPSEEK_MODEL='openrouter/deepseek/deepseek-v4.1-flash-1017'
 ORACLE_CMD='.venv/bin/python -m pytest -q tests'            # verificação completa do projeto; precisa estar verde ANTES de começar
-MAX_ITERS=24             # teto de iterações (cada uma = 1 sessão `claude -p` com contexto limpo)
-MAX_HOURS=14              # teto de tempo de parede
+MAX_ITERS=50             # teto de iterações (cada uma = 1 sessão do agente com contexto limpo)
+MAX_HOURS=48              # teto de tempo de parede
 MAX_ATTEMPTS=3           # falhas numa tarefa antes de marcá-la [!]
 NO_PROGRESS_LIMIT=5      # falhas seguidas (em qualquer tarefa) antes de parar tudo
 BUDGET_PER_ITER=50       # US$ máximo por iteração (--max-budget-usd)
-ITER_TIMEOUT_SEC=3600    # sessão que passar disso é encerrada e conta como tentativa falha (rede/Mac dormindo)
+ITER_TIMEOUT_SEC=7200    # sessão que passar disso é encerrada e conta como tentativa falha (rede/Mac dormindo)
 # Permissões da sessão headless. acceptEdits = edita arquivos do repo sem perguntar; comando Bash só
 # roda se estiver em ALLOWED_TOOLS. NÃO use `auto` (no -p não há quem aprove: toda escrita é negada)
 # nem bypassPermissions (libera qualquer comando na sua máquina).

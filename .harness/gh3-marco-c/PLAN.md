@@ -86,3 +86,76 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [!] T23: NRO e pacote do SD com T21-T22
   aceite: python3 tools/check_nro.py build/switch/gh3.nro && strings build/switch/gh3 | grep -q 'spirv-opt:' && test out/sd/switch/gh3-nx/gh3-nx.nro -nt src/native/native_renderer.cpp && tools/check_no_game_content.sh out/sd
   detalhe: igual ao T20 (Docker, -DGH3_PGO=, guardar o ELF em out/elf/, tools/make_sd_package.sh). Medição no aparelho fica com o humano.
+
+<!-- ===================== Plano 60 FPS (2026-10-19) ===================== -->
+<!-- Detalhe completo: docs/superpowers/plans/2026-10-19-gh3-nx-60fps.md. Meta: 60 FPS estaveis, piso 0.65, modo desempenho, Switch so na F5. -->
+
+- [x] T24: 60fps F1.1a+F1.2 — scene scale 0.65 + cap de render area generalizado (be32b23)
+  aceite: .venv/bin/python -m pytest -q tests/test_scene_scale.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-t24.png -- --gh3_native_scene_scale=0.65 && python3 tools/image_stats.py out/parity/native-t24.png --max-white 0.15 --min-stddev 20 && grep -q 'scene scale 0.65: 832x468' out/parity/native-t24.capture/game.log
+  detalhe: feito. Cap em CreateOrGetRenderTarget/known_1x_height; vale 1x e alias. Plano F1.1a/F1.2.
+- [x] T25: 60fps F1.3 — overdraw exato (blend 0x/1x e alpha NEVER sem Z/stencil) (f5058bd)
+  aceite: .venv/bin/python -m pytest -q tests/test_native_invisible.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-t25.png && python3 tools/image_stats.py out/parity/native-t25.png --max-white 0.15 --min-stddev 20
+  detalhe: feito. 53.248 draws pulados na captura; imagem identica.
+- [x] T28: 60fps F0.3 — fallback do guest output preto (piscadas verdes) (1370223)
+  aceite: grep -q 'color.float32\[0\] = 0.0f' src/native/gh3_native_system.cpp && ! grep -q '0.05f' src/native/gh3_native_system.cpp
+  detalhe: feito (test colour verde -> preto). Se o verde persistir, F0.2/F3.1 (present/ownership/formato). 10 transicoes no Switch na F5.
+- [x] T30: 60fps F0.5 — validar o T24 localmente (sem passe 320x2048)
+  aceite: python3 tools/gameplay_capture.py --renderer native --out out/parity/native-t24v.png -- --gh3_native_scene_scale=0.65 --gh3_native_gpu_profile=true && python3 tools/image_stats.py out/parity/native-t24v.png --max-white 0.15 --min-stddev 20 && ! grep -q 'h2048 c=t0p320' out/parity/native-t24v.capture/game.log
+  detalhe: feito; o passe virou h512/h256.
+- [ ] T26: 60fps F0.1 — protocolo A/B (3 corridas, mediana, p1, >50 ms)
+  aceite: .venv/bin/python -m pytest -q tests/test_gameplay_fps.py && python3 tools/gameplay_fps.py --help 2>&1 | grep -q -- '--runs'
+  detalhe: add --runs N (default 1) ao tools/gameplay_fps.py, mediana e p1/%>50ms; testes com logs sinteticos; playbook §8. Plano F0.1.
+- [ ] T27: 60fps F0.2 — log por swap (frontbuffer, formato, clear, resolve, RT key, fence)
+  aceite: .venv/bin/python -m pytest -q tests/test_swap_log.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-swap.png -- --gh3_native_swap_log=true && grep -q 'swap:' out/parity/native-swap.capture/game.log
+  detalhe: cvar gh3_native_swap_log; uma linha por swap; teste. Plano F0.2.
+- [ ] T29: 60fps F0.4 — auditoria de formato (VkFormat por alvo, 16F/gamma/clear)
+  aceite: .venv/bin/python -m pytest -q tests/test_format_log.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-format.png -- --gh3_native_format_log=true && grep -q 'VK_FORMAT_' out/parity/native-format.capture/game.log
+  detalhe: logar VkFormat por alvo uma vez; teste. Plano F0.4.
+- [ ] T31: 60fps F1.1b — controlador dinamico de resolucao 0.65-1.0 (alvo 16.7 ms)
+  aceite: .venv/bin/python -m pytest -q tests/test_scene_dynamic.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-dyn.png -- --gh3_native_scene_scale=0.65 --gh3_native_scene_dynamic=true && python3 tools/image_stats.py out/parity/native-dyn.png --max-white 0.15 --min-stddev 20 && grep -q 'scene dynamic:' out/parity/native-dyn.capture/game.log
+  detalhe: controlador puro (histerese 2-3 frames, passos 0.05, 0.5-1 s no nivel), alvo 16.7 ms; recriar alvos scene_scaled preservando conteudo; log. Plano F1.1b.
+- [ ] T32: 60fps F1.1c — CAS no blit da cena escalada
+  aceite: .venv/bin/python -m pytest -q tests/test_scene_cas.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-cas.png -- --gh3_native_scene_scale=0.65 --gh3_native_scene_cas=true && python3 tools/image_stats.py out/parity/native-cas.png --max-white 0.15 --min-stddev 20 && grep -q 'scene CAS' out/parity/native-cas.capture/game.log
+  detalhe: sharpening/CAS no blit (o blit atual e' LINEAR); teste/captura. Plano F1.1c.
+- [ ] T33: 60fps F1.4 — auditoria de formatos: 16F sem HDR, gamma, depth24, 64bpp
+  aceite: .venv/bin/python -m pytest -q tests/test_format_audit.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-audit.png -- --gh3_native_format_log=true && grep -q 'format audit:' out/parity/native-audit.capture/game.log
+  detalhe: eliminar alvo caro sem HDR real; medir. Plano F1.4.
+- [ ] T34: 60fps F2.1 — construir SPIRV-Tools/opt no Mac e no devkitA64
+  aceite: .venv/bin/python -m pytest -q tests/test_spirv_tools.py && test -f out/sdk-install/lib/libSPIRV-Tools-opt.a
+  detalhe: patch local no SDK (add_subdirectory spirv-tools, opt on) aplicado pelo setup_sdk.sh; build/install nos dois toolchains. Se o devkitA64 nao compilar, documentar e bloquear (nao inventar). Plano F2.1.
+- [ ] T35: 60fps F2.2 — spirv-opt nos shaders traduzidos (validar/fallback/log)
+  aceite: .venv/bin/python -m pytest -q tests/test_spirv_opt.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-opt.png -- --gh3_native_spirv_opt=true && python3 tools/image_stats.py out/parity/native-opt.png --max-white 0.15 --min-stddev 20 && grep -qE 'spirv-opt: [0-9]+ shaders, [0-9.]+% fewer' out/parity/native-opt.capture/game.log
+  detalhe: spvtools::Optimizer (validar; fallback ao original; contar instrucoes). Cvar padrao false, true no Switch. Plano F2.2.
+- [ ] T36: 60fps F2.3 — NAK/draw path do nfsmw (latencia 200, peephole 8)
+  aceite: .venv/bin/python -m pytest -q tests/test_nak_patch.py && tools/build_mesa.sh --check
+  detalhe: patch local no Mesa (como o 0005); build do NVK; documentar o ganho no Switch (F5). Plano F2.3.
+- [ ] T37: 60fps F2.4 — simplificar shaders (max(a,a), textureSize, branches)
+  aceite: .venv/bin/python -m pytest -q tests/test_shader_simplify.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-simpl.png && python3 tools/image_stats.py out/parity/native-simpl.png --max-white 0.15 --min-stddev 20
+  detalhe: pos-passe no SPIR-V traduzido; paridade. Plano F2.4.
+- [ ] T38: 60fps F2.5 — prewarm de pipelines + cache versionado
+  aceite: .venv/bin/python -m pytest -q tests/test_pipeline_prewarm.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-prewarm.png && grep -q 'pipeline prewarm:' out/parity/native-prewarm.capture/game.log
+  detalhe: evitar hitch de 59-160 ms/pipeline; log. Plano F2.5.
+- [ ] T39: 60fps F3.1 — instrumentar present/fence do presenter
+  aceite: .venv/bin/python -m pytest -q tests/test_present_wait.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-present.png && grep -q 'present fence wait' out/parity/native-present.capture/game.log
+  detalhe: medir a espera por 10 s antes de qualquer anel. Plano F3.1.
+- [ ] T40: 60fps F3.2 — present ring 3 output slots (se 3.1 justificar)
+  aceite: .venv/bin/python -m pytest -q tests/test_present_ring.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-ring.png && python3 tools/image_stats.py out/parity/native-ring.png --max-white 0.15 --min-stddev 20 && grep -q 'present ring:' out/parity/native-ring.capture/game.log
+  detalhe: 3 slots, 1 submit/frame, IMMEDIATE no Switch; nunca 4o work slot. Plano F3.2.
+- [ ] T41: 60fps F3.3 — resolve sem copia (depth/lazy) com restauracao
+  aceite: .venv/bin/python -m pytest -q tests/test_resolve_ownership.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-resolve.png -- --gh3_native_resolve_swap=true && python3 tools/image_stats.py out/parity/native-resolve.png --max-white 0.15 --min-stddev 20
+  detalhe: so quando o alvo inteiro for resolvido; restaurar conteudo; cor de fora ate paridade. Plano F3.3.
+- [ ] T42: 60fps F4.1 — caches do ring (IM_LOAD, sampler, query, zero log)
+  aceite: .venv/bin/python -m pytest -q tests/test_ring_caches.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-caches.png && python3 tools/image_stats.py out/parity/native-caches.png --max-white 0.15 --min-stddev 20
+  detalhe: per-draw caches do nfsmw; zero log no ring. Plano F4.1.
+- [ ] T43: 60fps F4.2 — function ordering + non_volatile_as_local + A/B -O2
+  aceite: .venv/bin/python -m pytest -q tests/test_function_order.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-order.png && python3 tools/image_stats.py out/parity/native-order.png --max-white 0.15 --min-stddev 20
+  detalhe: _start=0; boot; A/B. Plano F4.2.
+- [ ] T44: 60fps F4.3 — PGO representativo (build com o perfil existente)
+  aceite: .venv/bin/python -m pytest -q tests/test_pgo.py && test -f out/pgo/CMakeFiles#gh3.dir#src#main.cpp.gcda
+  detalhe: perfil em out/pgo; build GH3_PGO=usar; um perfil novo exige o Switch (humano). Plano F4.3.
+- [!] T45: 60fps F4.4 — funcoes quentes em C++/NEON (condicional)
+  aceite: .venv/bin/python -m pytest -q tests/test_hot_math.py
+  detalhe: so depois da F5 se o guest for o limite de 60; sub_8272C7C0 tem 1862 linhas/28 fmadds; comecar por funcoes menores; sem verificacao possivel, manter [!] (nao inventar aceite). Plano F4.4.
+- [ ] T46: 60fps F5 — NRO/pacote final + roteiro de medicao no Switch
+  aceite: python3 tools/check_nro.py build/switch/gh3.nro && strings build/switch/gh3 | grep -q 'scene scale' && strings build/switch/gh3 | grep -q 'spirv-opt' && strings build/switch/gh3 | grep -q 'present ring' && test -f out/sd/switch/gh3-nx/gh3-nx.nro && tools/check_no_game_content.sh out/sd
+  detalhe: build Docker com -DGH3_PGO=, ELF em out/elf/, tools/make_sd_package.sh; a medicao de 60 FPS e o gate humano (3 corridas, mediana >=58, zero >50 ms, 99o <=20 ms, sem verde, paridade). Plano F5.

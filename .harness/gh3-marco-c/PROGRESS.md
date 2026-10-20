@@ -172,3 +172,26 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - decisões: bloqueada por dependência. O pacote atual (T20) já contém T16-T18 e o log do anel.
 - pendente: refazer quando T21/T22 saírem.
 - 2026-10-18 05:21 T23 [!] bloqueada (depende de T21/T22)
+
+### T24 — feito fora do loop (be32b23)
+- feito: `switch/gh3.toml` 0.65; cap de render area por `known_1x_height`/`AliasHeight` (vale 1x e alias), preservado na recriação; teste de fiação 0.65.
+- verificado: suíte 163; captura 0.65 (832x468, white=0,011, stddev=52,3); o passe 320x2048 virou h512/h256.
+- decisões: o cap generalizado (T30) usa a altura real do alvo 1x revelada pelos draws explícitos.
+- pendente: ganho no Switch (F5).
+- 2026-10-19 23:55 T24 ✅ aceita (fora do loop)
+
+### T25 — feito fora do loop (f5058bd)
+- feito: `src/native/native_invisible.h` + 6 testes; o `Draw` pula blend 0×src/1×dst e alpha NEVER sem escrita de Z/stencil.
+- verificado: suíte 169; 53.248 draws pulados na captura; imagem white=0,001 stddev=50,0.
+- pendente: ganho real no Switch (F5).
+- 2026-10-19 23:55 T25 ✅ aceita (fora do loop)
+
+### T28 — feito fora do loop (1370223)
+- feito: fallback do guest output verde → preto (test colour).
+- verificado: grep do clear preto; 10 transições no Switch ficam para a F5.
+- 2026-10-19 23:55 T28 ✅ aceita (fora do loop)
+
+### T30 — feito fora do loop
+- feito: validação local do T24/F1.2 (perfil por passe).
+- verificado: `h2048 c=t0p320` não aparece; o passe virou h512/h256.
+- 2026-10-19 23:55 T30 ✅ aceita (fora do loop)
