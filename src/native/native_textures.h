@@ -55,6 +55,9 @@ struct ResolveDestination {
   uint32_t width = 0;
   uint32_t height = 0;
   VkFormat format = VK_FORMAT_UNDEFINED;
+  // F3.3: a depth image the render target handed over instead of copying it. The translated shaders
+  // sample it as depth (the image, not an R32 copy of it); views use the depth aspect.
+  bool depth = false;
   VkImage image = VK_NULL_HANDLE;
   VkDeviceMemory memory = VK_NULL_HANDLE;
   // Plain 2D view, for presenting.
@@ -146,6 +149,12 @@ class TextureCache {
                                             VkFormat format, uint32_t host_swizzle,
                                             VkCommandBuffer commands);
   const ResolveDestination* FindResolveDestination(uint32_t address) const;
+  // F3.3: makes the depth image the resolve destination at this address, taking ownership of it and
+  // of its memory (nothing is copied; the render target that gave it up gets another image). The
+  // destination holds the image in GENERAL, as render targets do. Null if the image cannot be viewed.
+  ResolveDestination* BindBorrowedDepth(uint32_t address, uint32_t width, uint32_t height,
+                                       VkFormat format, uint32_t host_swizzle, VkImage image,
+                                       VkDeviceMemory memory, VkCommandBuffer commands);
   // After a resolve wrote dest (transfer writes recorded in commands): brings
   // its sized copies up to date.
   void CopyToSized(ResolveDestination& dest, VkCommandBuffer commands);

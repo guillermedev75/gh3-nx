@@ -647,6 +647,12 @@ class NativeGraphicsSystem final : public rex::system::IGraphicsSystem {
           REXLOG_INFO("[native] {}", prewarm);
         }
       }
+      {
+        std::string ownership = renderer_.TakeResolveOwnershipReport();
+        if (!ownership.empty()) {
+          REXLOG_INFO("[native] {}", ownership);
+        }
+      }
       uint64_t frames = std::max<uint64_t>(swaps_ - reported_swaps_before_, 1);
       uint64_t gpu_count =
           std::max<uint64_t>(s.gpu_submissions - reported_render_.gpu_submissions, 1);

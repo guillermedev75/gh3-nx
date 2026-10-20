@@ -1052,7 +1052,8 @@ VkImageView TextureCache::GetResolveDestinationView2D(uint32_t address, uint32_t
   view.format = dest.format;
   view.components = {ComponentSwizzle(swizzle, 0), ComponentSwizzle(swizzle, 1),
                      ComponentSwizzle(swizzle, 2), ComponentSwizzle(swizzle, 3)};
-  view.subresourceRange = rex::ui::vulkan::util::InitializeSubresourceRange();
+  view.subresourceRange = rex::ui::vulkan::util::InitializeSubresourceRange(
+      dest.depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT);
   VkImageView result = VK_NULL_HANDLE;
   if (im.device->functions().vkCreateImageView(im.device->device(), &view, nullptr, &result) !=
       VK_SUCCESS) {
@@ -1139,8 +1140,10 @@ void TextureCache::CopyToSized(ResolveDestination& dest, VkCommandBuffer command
   dfn.vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT,
                            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &between, 0, nullptr, 0,
                            nullptr);
+  const VkImageAspectFlags aspect =
+      dest.depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
   for (auto& sized : dest.sized) {
-    if (sized->storage_view && dest.view && impl_->compute_copy &&
+    if (!dest.depth && sized->storage_view && dest.view && impl_->compute_copy &&
         impl_->compute_copy(commands, dest.view, sized->storage_view, 0, 0, 0, 0,
                             std::min(sized->width, dest.width),
                             std::min(sized->height, dest.height))) {
@@ -1148,7 +1151,7 @@ void TextureCache::CopyToSized(ResolveDestination& dest, VkCommandBuffer command
       continue;
     }
     VkImageCopy region = {};
-    region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.srcSubresource = {aspect, 0, 0, 1};
     region.dstSubresource = region.srcSubresource;
     region.extent = {std::min(sized->width, dest.width), std::min(sized->height, dest.height), 1};
     dfn.vkCmdCopyImage(commands, dest.image, VK_IMAGE_LAYOUT_GENERAL, sized->image,
@@ -1160,6 +1163,73 @@ void TextureCache::CopyToSized(ResolveDestination& dest, VkCommandBuffer command
 const ResolveDestination* TextureCache::FindResolveDestination(uint32_t address) const {
   auto it = impl_->resolve_destinations.find(address);
   return it == impl_->resolve_destinations.end() ? nullptr : it->second.get();
+}
+
+ResolveDestination* TextureCache::BindBorrowedDepth(uint32_t address, uint32_t width,
+                                                    uint32_t height, VkFormat format,
+                                                    uint32_t host_swizzle, VkImage image,
+                                                    VkDeviceMemory memory,
+                                                    VkCommandBuffer commands) {
+  Impl& im = *impl_;
+  const auto& dfn = im.device->functions();
+  VkDevice d = im.device->device();
+  auto it = im.resolve_destinations.find(address);
+  if (it != im.resolve_destinations.end()) {
+    // The address now has another owner: what was there is done (views included).
+    ResolveDestination& old = *it->second;
+    std::vector<VkImageView> views;
+    if (old.view) views.push_back(old.view);
+    for (auto& [k, v] : old.texture_views) views.push_back(v);
+    im.Retire(old.image, old.memory, std::move(views), im.frame);
+    for (auto& sized : old.sized) {
+      std::vector<VkImageView> sized_views;
+      for (auto& [k, v] : sized->views) sized_views.push_back(v);
+      im.Retire(sized->image, sized->memory, std::move(sized_views), im.frame);
+    }
+    im.resolve_destinations.erase(it);
+  }
+  auto dest = std::make_unique<ResolveDestination>();
+  dest->address = address;
+  dest->width = width;
+  dest->height = height;
+  dest->format = format;
+  dest->depth = true;
+  dest->host_swizzle = host_swizzle;
+  dest->last_written_frame = im.frame;
+  dest->image = image;
+  dest->memory = memory;
+  VkImageViewCreateInfo view = {};
+  view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  view.image = dest->image;
+  view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  view.format = dest->format;
+  view.subresourceRange =
+      rex::ui::vulkan::util::InitializeSubresourceRange(VK_IMAGE_ASPECT_DEPTH_BIT);
+  if (dfn.vkCreateImageView(d, &view, nullptr, &dest->view) != VK_SUCCESS) {
+    return nullptr;
+  }
+  // Written by the depth attachment until now (the image is a render target's), sampled from here
+  // on. GENERAL to GENERAL: render targets and resolve destinations already live there.
+  VkImageMemoryBarrier barrier = {};
+  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  barrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+  barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
+  barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+  barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.image = dest->image;
+  barrier.subresourceRange = view.subresourceRange;
+  dfn.vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                               VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           0, 0, nullptr, 0, nullptr, 1, &barrier);
+  // Fetches of this address that were answered from memory must now find it.
+  im.memo.clear();
+  ++im.answers_epoch;
+  ResolveDestination* result = dest.get();
+  im.resolve_destinations.emplace(address, std::move(dest));
+  return result;
 }
 
 ResolveDestination* TextureCache::GetResolveDestination(uint32_t address, uint32_t width,
@@ -1322,7 +1392,8 @@ VkImageView TextureCache::GetViewUncached(const xenos::xe_gpu_texture_fetch_t& f
       fetch.dimension != xenos::DataDimension::kCube &&
       dimension != xenos::FetchOpDimension::kCube) {
     auto it = im.resolve_destinations.find(base_page << 12);
-    if (it != im.resolve_destinations.end() && it->second->format == VK_FORMAT_R32_SFLOAT) {
+    if (it != im.resolve_destinations.end() &&
+        (it->second->depth || it->second->format == VK_FORMAT_R32_SFLOAT)) {
       // A depth resolve: floats for depth formats, the memory words for the rest.
       xenos::TextureFormat format = rex::graphics::GetBaseFormat(fetch.format);
       bool depth_format = format == xenos::TextureFormat::k_24_8 ||
@@ -1422,7 +1493,8 @@ VkImageView TextureCache::GetViewUncached(const xenos::xe_gpu_texture_fetch_t& f
           view.format = dest.format;
           view.components = {ComponentSwizzle(swizzle, 0), ComponentSwizzle(swizzle, 1),
                              ComponentSwizzle(swizzle, 2), ComponentSwizzle(swizzle, 3)};
-          view.subresourceRange = rex::ui::vulkan::util::InitializeSubresourceRange();
+          view.subresourceRange = rex::ui::vulkan::util::InitializeSubresourceRange(
+              dest.depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT);
           VkImageView result = VK_NULL_HANDLE;
           if (dfn.vkCreateImageView(d, &view, nullptr, &result) != VK_SUCCESS) {
             return null_view;
@@ -1444,7 +1516,8 @@ VkImageView TextureCache::GetViewUncached(const xenos::xe_gpu_texture_fetch_t& f
       view.format = dest.format;
       view.components = {ComponentSwizzle(swizzle, 0), ComponentSwizzle(swizzle, 1),
                          ComponentSwizzle(swizzle, 2), ComponentSwizzle(swizzle, 3)};
-      view.subresourceRange = rex::ui::vulkan::util::InitializeSubresourceRange();
+      view.subresourceRange = rex::ui::vulkan::util::InitializeSubresourceRange(
+          dest.depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT);
       VkImageView result = VK_NULL_HANDLE;
       if (dfn.vkCreateImageView(d, &view, nullptr, &result) != VK_SUCCESS) {
         return null_view;

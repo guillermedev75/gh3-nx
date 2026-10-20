@@ -71,6 +71,7 @@ extern "C" {
 #include "native_shader_simplify.h"
 #include "native_pipeline_prewarm.h"
 #include "native_present_ring.h"
+#include "native_resolve_ownership.h"
 
 // T32: o SPIR-V que o próprio SDK usa no presenter para CAS (FidelityFX), reaproveitado no blit que
 // sobe a cena escalada. O VS desenha o retângulo em NDC e o PS lê 9 texels e aplica o CAS.
@@ -153,6 +154,11 @@ REXCVAR_DEFINE_BOOL(gh3_native_pipeline_prewarm, true, "GH3",
                     "Guarda as chaves dos pipelines usados (com o microcodigo dos shaders) ao lado "
                     "do cache do driver e recria esses pipelines na inicializacao, antes do jogo: "
                     "o primeiro uso na gameplay nao espera a compilacao (F2.5 do plano de 60 FPS)");
+REXCVAR_DEFINE_BOOL(gh3_native_resolve_swap, false, "GH3",
+                    "Resolve de profundidade do alvo inteiro sem copiar (F3.3): o destino fica com a "
+                    "imagem do alvo (amostrada como profundidade) e o alvo ganha uma imagem nova; o "
+                    "conteudo volta por copia antes de o alvo ser escrito sem clear. A cor fica de "
+                    "fora ate a paridade");
 
 // A auditoria numera os VkFormat para compilar sem o SDK; se um valor mudar, o build acusa aqui.
 static_assert(uint32_t(VK_FORMAT_R8G8B8A8_UNORM) == gh3::native::format_log::kR8G8B8A8Unorm);
@@ -348,6 +354,9 @@ struct RenderTarget {
   // T31: escala com que a imagem escalada foi criada (só em key.scene_scaled). O controlador dinâmico
   // muda a escala; um alvo de outro tamanho precisa ser recriado, inclusive menor.
   float scale_used = 0.0f;
+  // F3.3: endereço do destino que ficou com a imagem deste alvo (0 = o conteúdo está aqui). Enquanto
+  // não for zero, o alvo tem uma imagem nova e vazia; o conteúdo volta por cópia antes de escrevê-lo.
+  uint32_t content_address = 0;
 };
 
 // The attachments of a rendering scope: color 0-3 and depth.
@@ -1519,6 +1528,12 @@ struct Renderer::Impl {
   }
   uint64_t alias_clock = 0;
   void SyncAliasTarget(RenderTarget* target);
+  // F3.3: resolve de profundidade sem cópia. O alvo inteiro passa a imagem ao destino e ganha uma
+  // imagem nova; o conteúdo volta por cópia antes de o alvo ser escrito sem clear.
+  bool CreateDepthImage(RenderTarget* rt);
+  bool HandOffDepthImage(RenderTarget* rt, uint32_t address);
+  void RestoreTargetContent(RenderTarget* rt);
+  ownership::Stats resolve_ownership;
   void SyncSceneTarget(RenderTarget* target);
   void BlitTarget(RenderTarget* source, RenderTarget* target, int32_t src_w, int32_t src_h,
                   int32_t dst_w, int32_t dst_h, VkFilter filter);
@@ -3152,6 +3167,11 @@ RenderTarget* Renderer::Impl::CreateOrGetRenderTarget(const RenderTargetKey& key
       return old;
     }
   }
+  // F3.3: o conteúdo deste alvo pode estar no destino que ficou com a imagem antiga; volta antes de
+  // a imagem ser recriada (o caminho abaixo copia o conteúdo do alvo para a nova).
+  if (old && old->content_address) {
+    RestoreTargetContent(old);
+  }
   auto rt = std::make_unique<RenderTarget>();
   rt->key = key;
   rt->width = std::max(key.pitch, 1u);
@@ -3324,7 +3344,176 @@ RenderTarget* Renderer::Impl::CreateOrGetRenderTarget(const RenderTargetKey& key
   return result;
 }
 
+// F3.3: a imagem de um alvo de profundidade, de novo (mesmo tamanho, formato e uso), começando
+// limpa. Usada quando o alvo entrega a imagem que tinha a um resolve.
+bool Renderer::Impl::CreateDepthImage(RenderTarget* rt) {
+  if (!rt || !rt->key.is_depth || rt->samples != VK_SAMPLE_COUNT_1_BIT) {
+    return false;
+  }
+  VkImageCreateInfo info = {};
+  info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  info.imageType = VK_IMAGE_TYPE_2D;
+  info.format = rt->format;
+  info.extent = {rt->width, rt->height, 1};
+  info.mipLevels = 1;
+  info.arrayLayers = 1;
+  info.samples = VK_SAMPLE_COUNT_1_BIT;
+  info.tiling = VK_IMAGE_TILING_OPTIMAL;
+  info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+               VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+  info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  if (!rex::ui::vulkan::util::CreateDedicatedAllocationImage(
+          device, info, rex::ui::vulkan::util::MemoryPurpose::kDeviceLocal, rt->image,
+          rt->memory)) {
+    REXLOG_ERROR("[native] Could not create a {}x{} depth image", rt->width, rt->height);
+    rt->image = VK_NULL_HANDLE;
+    rt->memory = VK_NULL_HANDLE;
+    return false;
+  }
+  const VkImageAspectFlags aspect =
+      HasStencil(rt->format) ? VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT
+                             : VkImageAspectFlags(VK_IMAGE_ASPECT_DEPTH_BIT);
+  VkImageViewCreateInfo view = {};
+  view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  view.image = rt->image;
+  view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  view.format = rt->format;
+  view.subresourceRange = rex::ui::vulkan::util::InitializeSubresourceRange(aspect);
+  dfn().vkCreateImageView(vk, &view, nullptr, &rt->view);
+  view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+  dfn().vkCreateImageView(vk, &view, nullptr, &rt->sample_view);
+  view.subresourceRange.aspectMask = aspect;
+  // Como em CreateOrGetRenderTarget: GENERAL, começando limpa.
+  BeginRecording();
+  EndPass();
+  VkCommandBuffer c = cmd();
+  VkImageMemoryBarrier barrier = {};
+  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  barrier.srcAccessMask = 0;
+  barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.image = rt->image;
+  barrier.subresourceRange = rex::ui::vulkan::util::InitializeSubresourceRange(aspect);
+  dfn().vkCmdPipelineBarrier(c, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             0, 0, nullptr, 0, nullptr, 1, &barrier);
+  VkClearDepthStencilValue clear = {1.0f, 0};
+  vkCmdClearDepthStencilImage(c, rt->image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1,
+                              &barrier.subresourceRange);
+  VkMemoryBarrier after = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
+                           VK_ACCESS_TRANSFER_WRITE_BIT,
+                           VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                               VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT};
+  dfn().vkCmdPipelineBarrier(c, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                             0, 1, &after, 0, nullptr, 0, nullptr);
+  return true;
+}
+
+// F3.3: entrega a imagem do alvo ao destino (nada é copiado) e dá ao alvo uma imagem nova.
+bool Renderer::Impl::HandOffDepthImage(RenderTarget* rt, uint32_t address) {
+  if (!rt || rt->content_address || !rt->key.is_depth) {
+    return false;
+  }
+  VkImage image = rt->image;
+  VkDeviceMemory memory = rt->memory;
+  VkImageView view = rt->view;
+  VkImageView sample_view = rt->sample_view;
+  rt->image = VK_NULL_HANDLE;
+  rt->memory = VK_NULL_HANDLE;
+  rt->view = VK_NULL_HANDLE;
+  rt->sample_view = VK_NULL_HANDLE;
+  if (!CreateDepthImage(rt)) {
+    rt->image = image;
+    rt->memory = memory;
+    rt->view = view;
+    rt->sample_view = sample_view;
+    return false;
+  }
+  ResolveDestination* dest = textures.BindBorrowedDepth(
+      address, rt->width, rt->height, rt->format,
+      uint32_t(xenos::XE_GPU_TEXTURE_SWIZZLE_RRRR), image, memory, cmd());
+  if (!dest) {
+    // Não deu: a imagem antiga (com o conteúdo) volta a ser a do alvo; a nova é descartada.
+    retired_render_targets.push_back({frame, rt->image, rt->view, rt->sample_view, rt->memory});
+    rt->image = image;
+    rt->memory = memory;
+    rt->view = view;
+    rt->sample_view = sample_view;
+    return false;
+  }
+  if (view) dfn().vkDestroyImageView(vk, view, nullptr);
+  if (sample_view) dfn().vkDestroyImageView(vk, sample_view, nullptr);
+  rt->content_address = address;
+  return true;
+}
+
+// F3.3: o conteúdo do alvo está no destino que ficou com a imagem; traz de volta antes de o alvo ser
+// lido ou escrito (o passe seguinte carrega o que estiver nele).
+void Renderer::Impl::RestoreTargetContent(RenderTarget* rt) {
+  const uint32_t address = rt ? rt->content_address : 0;
+  if (!address) {
+    return;
+  }
+  rt->content_address = 0;
+  const ResolveDestination* dest = textures.FindResolveDestination(address);
+  if (!dest || dest->format != rt->format || dest->width < rt->width ||
+      dest->height < rt->height) {
+    return;
+  }
+  ++resolve_ownership.restores;
+  resolve_ownership.restore_bytes += uint64_t(rt->width) * rt->height * 4;
+  EndPass();
+  VkCommandBuffer c = cmd();
+  const VkImageAspectFlags aspect =
+      HasStencil(rt->format) ? VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT
+                             : VkImageAspectFlags(VK_IMAGE_ASPECT_DEPTH_BIT);
+  VkMemoryBarrier to_copy = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
+                             VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                                 VK_ACCESS_SHADER_READ_BIT,
+                             VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT};
+  dfn().vkCmdPipelineBarrier(c,
+                             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &to_copy, 0, nullptr, 0,
+                             nullptr);
+  VkImageCopy copy = {};
+  copy.srcSubresource = {aspect, 0, 0, 1};
+  copy.dstSubresource = copy.srcSubresource;
+  copy.extent = {std::min(rt->width, dest->width), std::min(rt->height, dest->height), 1};
+  dfn().vkCmdCopyImage(c, dest->image, VK_IMAGE_LAYOUT_GENERAL, rt->image,
+                       VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+  VkMemoryBarrier after = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
+                           VK_ACCESS_TRANSFER_WRITE_BIT,
+                           VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                               VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                               VK_ACCESS_SHADER_READ_BIT};
+  dfn().vkCmdPipelineBarrier(c, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             0, 1, &after, 0, nullptr, 0, nullptr);
+}
+
 bool Renderer::Impl::BeginPass(const PassTargets& targets, uint32_t wanted_height) {
+  // F3.3: um alvo que entregou a imagem a um resolve volta a ser desenhado com loadOp LOAD, então o
+  // conteúdo vem de volta antes do passe. Um clear inteiro (o do ZCULL) o dispensa.
+  for (uint32_t i = 0; i < 4; ++i) {
+    if (targets.color[i] && targets.color[i]->content_address) {
+      RestoreTargetContent(targets.color[i]);
+    }
+  }
+  if (targets.depth && targets.depth->content_address) {
+    if (zcull && targets.depth->cleared_frame != frame) {
+      targets.depth->content_address = 0;
+    } else {
+      RestoreTargetContent(targets.depth);
+    }
+  }
   // The render area is the attachment size capped by what this draw can touch,
   // not the whole attachment: one full-EDRAM draw (the game's 4x alias with the
   // default 8192 scissor) used to grow the shared 1280 target to 2048 rows and
@@ -4828,6 +5017,11 @@ void Renderer::Impl::Resolve() {
   }
   RenderTarget* source = GetRenderTarget(source_key, uint32_t(host_rect[3]));
   if (!source) return;
+  // F3.3: o conteúdo deste alvo pode estar no destino de um resolve anterior (a imagem foi entregue
+  // a ele). Um resolve lê o alvo, então ele volta antes.
+  if (source->content_address) {
+    RestoreTargetContent(source);
+  }
   c = cmd();
   uint32_t width = uint32_t(x1 - x0);
   uint32_t height =
@@ -4845,6 +5039,48 @@ void Renderer::Impl::Resolve() {
   bool copy = dest_base != 0 &&
               (copy_control.copy_command == xenos::CopyCommand::kRaw ||
                copy_control.copy_command == xenos::CopyCommand::kConvert);
+  uint32_t dest_width = std::min(uint32_t(x1), 8192u);
+  uint32_t dest_height = std::min(uint32_t(y0) + height, 8192u);
+  // F3.3: alvo de profundidade inteiro, 1 amostra, destino do mesmo tamanho e formato: o destino fica
+  // com a imagem (nada é copiado) e o alvo ganha outra. Só quando o jogo amostra o resolve como
+  // profundidade (os words de memória não existiriam).
+  bool handed_off = false;
+  if (copy && is_depth) {
+    ownership::Rect orect{host_rect[0], host_rect[1], host_rect[2], host_rect[3]};
+    ownership::Source osrc;
+    osrc.width = source->width;
+    osrc.height = source->height;
+    osrc.samples = 1u << msaa;
+    osrc.depth = true;
+    osrc.holds_content = source->content_address == 0;
+    ownership::Destination odst;
+    odst.width = dest_width;
+    odst.height = dest_height;
+    odst.format = uint32_t(source->format);
+    ownership::Decision decision =
+        REXCVAR_GET(gh3_native_resolve_swap)
+            ? ownership::Decide(orect, uint32_t(source->format), osrc, odst)
+            : ownership::Decision::kCopy;
+    if (decision == ownership::Decision::kHandOff &&
+        !textures.WantsDepthWords(dest_base & 0x1FFFFFFF) &&
+        HandOffDepthImage(source, dest_base & 0x1FFFFFFF)) {
+      handed_off = true;
+      static bool handoff_logged = false;
+      if (!handoff_logged) {
+        handoff_logged = true;
+        REXLOG_INFO("[native] resolve ownership: handed off {:08X} ({}x{}) without copying",
+                    dest_base & 0x1FFFFFFF, source->width, source->height);
+      }
+      ownership::Count(resolve_ownership, decision,
+                       uint64_t(source->width) * source->height * 4);
+      resolve_barrier_pending = true;
+    } else {
+      ownership::Count(resolve_ownership,
+                       decision == ownership::Decision::kHandOff ? ownership::Decision::kCopy
+                                                                 : decision,
+                       0);
+    }
+  }
   {  // T9 PROBE (temporário)
     static std::unordered_set<uint64_t> seen;
     auto dp = r.Get<reg::RB_COPY_DEST_PITCH>();
@@ -4862,7 +5098,7 @@ void Renderer::Impl::Resolve() {
                   uint32_t(copy_control.depth_clear_enable));
     }
   }
-  if (copy) {
+  if (copy && !handed_off) {
     VkMemoryBarrier to_transfer = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
                                    VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
                                        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
@@ -4879,10 +5115,6 @@ void Renderer::Impl::Resolve() {
     // samples its full-screen resolves at 1040 wide, where the pitch made the
     // image 1056 and every one of them needed a corrected copy each frame.
     // Smaller textures sampled from a corner still get one (CopyToSized).
-    uint32_t dest_width = uint32_t(x1);
-    uint32_t dest_height = uint32_t(y0) + height;
-    dest_width = std::min(dest_width, 8192u);
-    dest_height = std::min(dest_height, 8192u);
     VkFormat dest_format = is_depth ? VK_FORMAT_R32_SFLOAT : source->format;
     uint32_t host_swizzle = is_depth ? uint32_t(xenos::XE_GPU_TEXTURE_SWIZZLE_RRRR)
                                      : uint32_t(xenos::XE_GPU_TEXTURE_SWIZZLE_RGBA);
@@ -5103,6 +5335,21 @@ void Renderer::Impl::Resolve() {
     if (clear_color) {
       color_target = source;
       clear_targets.color[0] = color_target;
+    }
+    // F3.3: o clear que cobre o alvo inteiro dispensa trazer o conteúdo de volta (o resolve já o
+    // entregou ao destino); um clear parcial precisa dele antes de limpar.
+    if (depth_target && depth_target->content_address) {
+      const bool whole = host_rect[0] <= 0 && host_rect[1] <= 0 &&
+                         uint32_t(host_rect[2]) >= depth_target->width &&
+                         uint32_t(host_rect[3]) >= depth_target->height;
+      if (whole) {
+        depth_target->content_address = 0;
+      } else {
+        RestoreTargetContent(depth_target);
+      }
+    }
+    if (color_target && color_target->content_address) {
+      RestoreTargetContent(color_target);
     }
     EndPass();
     if (BeginPass(clear_targets)) {
@@ -5859,6 +6106,10 @@ std::string Renderer::TakePrewarmReport() {
   const uint32_t after = created >= at_start ? created - at_start : 0;
   return fmt::format("pipeline prewarm: {} at start ({} of {} from the cache), {} new since",
                      at_start, impl_->prewarm_stats.created, impl_->prewarm_stats.loaded, after);
+}
+
+std::string Renderer::TakeResolveOwnershipReport() {
+  return impl_ ? ownership::Format(impl_->resolve_ownership) : std::string();
 }
 
 std::string Renderer::TakeShaderSimplifyReport() {
