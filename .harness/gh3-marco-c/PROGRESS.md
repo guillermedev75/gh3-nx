@@ -274,3 +274,11 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - decisões (e por quê): gravar o microcódigo (não o SPIR-V) porque o `LoadShader` do jogo reusa o shader pelo hash e a tradução continua num thread só (o init roda antes dos workers usarem o tradutor); o microcódigo fica no byte order do host (como o `Shader` do SDK), então o hash da chave (do guest) não confere por XXH3 — a integridade é o hash do corpo do arquivo. Arquivo é cache local da máquina (`~/.local/share/gh3/cache/shaders/driver`), como o cache do driver: nunca vai ao repo/SD. Gravação periódica porque o capture encerra por SIGTERM (sem `Shutdown`).
 - pendente: NRO do Switch não rebuildado (T46); custo do prewarm no boot do Switch e o "zero new since" na mesma música ficam para a F5 (o manifesto é a união das telas vistas: a 1ª execução grava, a 2ª já zera).
 - 2026-10-20 04:07 T38 ✅ aceita (iter 11)
+
+### T39 — tentativa 1
+- feito: patch local no SDK `patches/rexglue-local/0002-present-fence-wait.patch` (header `present_wait_stats.h` + `SetPresentFenceWaitAccounting` no tracker + `AddPresentFenceWaitNs`/`ConsumePresentFenceWaitNs` no presenter, marcando só os 3 trackers dele); runtime lê e zera a janela no `Report` de 10 s e loga `present fence wait`; `src/native/native_present_wait.h` (puro) + `tests/test_present_wait.py` (7, vermelhos antes); playbook §8/F3.1.
+- decisões (e por quê): medir no presenter do SDK (T17 mostrou que o gameplay usa `VulkanPresenter`, não o fallback) e não o tempo total de `RefreshGuestOutput`, que inclui o nosso compute de swap; contar só fences dos trackers do presenter, não os do command processor nem os 4 work slots do renderer.
+- verificado: aceite exit 0 (7 testes; captura nativa; 8 linhas `present fence wait`); suíte 253 passed; SDK+app rebuildados (`setup_sdk.sh --check` OK, 16+2 patches).
+- medido no Mac: 0,0-1,6 ms/10 s, 0-2 esperas por janela (~500 quadros) — no Mac o presenter não serializa; a decisão do anel (T40) depende da medida no Switch (F5).
+- pendente: NRO do Switch não rebuildado (T46); a linha no Switch só com o aparelho (F5).
+- 2026-10-20 04:20 T39 ✅ aceita (iter 12)

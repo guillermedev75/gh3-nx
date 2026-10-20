@@ -20,6 +20,7 @@
 
 #include "gh3_native_system.h"
 #include "../guest_pacing_stats.h"
+#include "native_present_wait.h"
 #include "native_renderer.h"
 
 #include <algorithm>
@@ -49,6 +50,7 @@
 #include <rex/thread.h>
 #include <rex/ui/presenter.h>
 #include <rex/ui/vulkan/device.h>
+#include <rex/ui/vulkan/present_wait_stats.h>
 #include <rex/ui/vulkan/presenter.h>
 #include <rex/ui/vulkan/provider.h>
 #include <rex/ui/windowed_app_context.h>
@@ -593,6 +595,16 @@ class NativeGraphicsSystem final : public rex::system::IGraphicsSystem {
     reported_copies_ = copies_;
     reported_swaps_before_ = reported_swaps_;
     reported_swaps_ = swaps_;
+    {
+      // F3.1: o presenter acumula o tempo parado nos fences dele; a janela é lida e zerada aqui
+      // para a medida ser dos mesmos 10 s das outras linhas do relatório.
+      uint64_t waits = 0;
+      present_wait::Window window;
+      window.wait_ns = rex::ui::vulkan::ConsumePresentFenceWaitNs(&waits);
+      window.count = waits;
+      window.frames = swaps_ - reported_swaps_before_;
+      REXLOG_INFO("[native] {}", present_wait::Format(window));
+    }
     if (renderer_ready_) {
       const RendererStats& s = renderer_.stats();
       REXLOG_INFO(

@@ -488,3 +488,30 @@ O F2.5 fecha isso guardando as chaves e recriando tudo **antes de o jogo rodar**
 - **Cvar**: `gh3_native_pipeline_prewarm` (padrão true; desligar só tira o prewarm, o cache do driver
   continua versionado). O arquivo é **local da máquina**, derivado do jogo como o cache do driver —
   nunca entra no repositório nem no pacote do SD.
+
+### F3.1 — espera de fence do presenter, medida por 10 s (2026-10-20)
+
+O T17 mostrou que o present do gameplay não é o fallback de `ClearOutput`: ele passa pelo presenter do
+SDK (`VulkanPresenter::RefreshGuestOutput` → `PaintAndPresent`). As esperas de fence que o profiler do
+Switch mostra (playbook §8: 341-656 ms/s) acontecem lá, nos trackers de submissão do próprio presenter:
+o anel de **paint** (`paint_context_.submission_tracker`, espera a submissão que vai ser reutilizada a
+cada quadro) e o **refresh do guest output**
+(`guest_output_image_refresher_submission_tracker_`, só quando o tamanho do frontbuffer muda). Os
+`vkWaitForFences` do processador de comandos e os 4 **work slots** do renderer não entram na conta.
+
+- **`patches/rexglue-local/0002-present-fence-wait.patch`** (aplicado pelo `tools/setup_sdk.sh`):
+  - `include/rex/ui/vulkan/present_wait_stats.h`: `AddPresentFenceWaitNs` (acumula ns + contagem em
+    atômicos) e `ConsumePresentFenceWaitNs` (troca atômica para 0, devolve a janela).
+  - `VulkanSubmissionTracker::SetPresentFenceWaitAccounting(true)`: cronometra o `vkWaitForFences` de
+    `AwaitSubmissionCompletion` só nos trackers marcados. O presenter marca os três dele
+    (`guest_output_image_refresher_`, `ui_` e o do paint) em `InitializeSurfaceIndependent`.
+- **Runtime** (`src/native/gh3_native_system.cpp`, `Report` a cada 10 s): lê e zera a janela e loga
+  `[native] present fence wait X.X ms/10 s (N waits, Y.Y ms each, F frames)`, ao lado das linhas
+  `[native] last 10 s`. Formatação pura em `src/native/native_present_wait.h` (testada sem SDK com `c++`).
+- `vkAcquireNextImageKHR` **não** é fence e não entra: no Mac é ele que segura o quadro (vsync), não o
+  fence; no Switch há o aviso de 3 s do presenter para esse caso.
+- **Medido no Mac (captura T39)**: 0,0-1,6 ms/10 s com 0-2 esperas por janela em ~500 quadros — ou seja,
+  no Mac o presenter não serializa CPU/GPU, como esperado (a GPU não é o limite). A decisão do anel de
+  present (F3.2/T40) depende desta linha medida **no Switch** (F5); no Mac ela não justifica nada.
+- Cuidado ao ler: ns e contagem são trocados em átomos separados, então uma espera que começa entre as
+  duas trocas pode cair na janela seguinte (erro de no máximo uma espera por relatório).

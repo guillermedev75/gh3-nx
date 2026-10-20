@@ -135,7 +135,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [x] T38: 60fps F2.5 — prewarm de pipelines + cache versionado
   aceite: .venv/bin/python -m pytest -q tests/test_pipeline_prewarm.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-prewarm.png && grep -q 'pipeline prewarm:' out/parity/native-prewarm.capture/game.log
   detalhe: evitar hitch de 59-160 ms/pipeline; log. Plano F2.5.
-- [ ] T39: 60fps F3.1 — instrumentar present/fence do presenter
+- [x] T39: 60fps F3.1 — instrumentar present/fence do presenter
   aceite: .venv/bin/python -m pytest -q tests/test_present_wait.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-present.png && grep -q 'present fence wait' out/parity/native-present.capture/game.log
   detalhe: medir a espera por 10 s antes de qualquer anel. Plano F3.1.
 - [ ] T40: 60fps F3.2 — present ring 3 output slots (se 3.1 justificar)
