@@ -57,6 +57,7 @@ extern "C" {
 }
 #endif
 
+#include "native_format_log.h"
 #include "native_geometry_shaders.h"
 #include "native_swap_log.h"
 #include "native_edram_samples.h"
@@ -110,6 +111,22 @@ REXCVAR_DEFINE_BOOL(gh3_native_async_pipelines, true, "GH3",
 REXCVAR_DEFINE_BOOL(gh3_native_swap_log, false, "GH3",
                     "Uma linha \"swap:\" por swap com frontbuffer, formato, clear, resolve, chave "
                     "do render target, alias_seq e espera de fence (F0.2 do plano de 60 FPS)");
+REXCVAR_DEFINE_BOOL(gh3_native_format_log, false, "GH3",
+                    "Uma linha \"format:\" por alvo criado com o VkFormat, o formato do guest, "
+                    "16F, gamma, clear inicial, scene scale e alias (F0.4 do plano de 60 FPS)");
+
+// A auditoria numera os VkFormat para compilar sem o SDK; se um valor mudar, o build acusa aqui.
+static_assert(uint32_t(VK_FORMAT_R8G8B8A8_UNORM) == gh3::native::format_log::kR8G8B8A8Unorm);
+static_assert(uint32_t(VK_FORMAT_A2B10G10R10_UNORM_PACK32) == gh3::native::format_log::kA2B10G10R10UnormPack32);
+static_assert(uint32_t(VK_FORMAT_R16G16_SNORM) == gh3::native::format_log::kR16G16Snorm);
+static_assert(uint32_t(VK_FORMAT_R16G16_SFLOAT) == gh3::native::format_log::kR16G16Sfloat);
+static_assert(uint32_t(VK_FORMAT_R16G16B16A16_SNORM) == gh3::native::format_log::kR16G16B16A16Snorm);
+static_assert(uint32_t(VK_FORMAT_R16G16B16A16_SFLOAT) == gh3::native::format_log::kR16G16B16A16Sfloat);
+static_assert(uint32_t(VK_FORMAT_R32_SFLOAT) == gh3::native::format_log::kR32Sfloat);
+static_assert(uint32_t(VK_FORMAT_R32G32_SFLOAT) == gh3::native::format_log::kR32G32Sfloat);
+static_assert(uint32_t(VK_FORMAT_D32_SFLOAT) == gh3::native::format_log::kD32Sfloat);
+static_assert(uint32_t(VK_FORMAT_D24_UNORM_S8_UINT) == gh3::native::format_log::kD24UnormS8Uint);
+static_assert(uint32_t(VK_FORMAT_D32_SFLOAT_S8_UINT) == gh3::native::format_log::kD32SfloatS8Uint);
 
 namespace gh3::native {
 namespace shaders {
@@ -2797,6 +2814,29 @@ RenderTarget* Renderer::Impl::CreateOrGetRenderTarget(const RenderTargetKey& key
   REXLOG_INFO("[native] Render target {}x{} {} format {} at tile {}, {}x MSAA", result->width,
               result->height, key.is_depth ? "depth" : "color", key.format, key.base_tiles,
               1u << key.msaa);
+  if (REXCVAR_GET(gh3_native_format_log)) {
+    using ColorFormat = xenos::ColorRenderTargetFormat;
+    format_log::Target entry;
+    entry.frame = frame;
+    entry.base = key.base_tiles << 12;
+    entry.pitch = key.pitch;
+    entry.width = result->width;
+    entry.height = result->height;
+    entry.samples = 1u << key.msaa;
+    entry.depth = key.is_depth != 0;
+    entry.vk_format = uint32_t(result->format);
+    entry.guest_format = key.format;
+    entry.half_float = !key.is_depth &&
+                       (key.format == uint32_t(ColorFormat::k_16_16_16_16_FLOAT) ||
+                        key.format == uint32_t(ColorFormat::k_2_10_10_10_FLOAT) ||
+                        key.format == uint32_t(ColorFormat::k_2_10_10_10_FLOAT_AS_16_16_16_16));
+    entry.gamma = !key.is_depth && key.format == uint32_t(ColorFormat::k_8_8_8_8_GAMMA);
+    entry.clear_color = !key.is_depth;
+    entry.clear_depth = key.is_depth != 0;
+    entry.scene_scaled = scaled;
+    entry.alias_msaa = key.alias_msaa;
+    REXLOG_INFO("[native] {}", format_log::Format(entry));
+  }
   return result;
 }
 

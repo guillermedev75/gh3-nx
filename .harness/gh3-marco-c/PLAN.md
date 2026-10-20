@@ -108,7 +108,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [x] T27: 60fps F0.2 — log por swap (frontbuffer, formato, clear, resolve, RT key, fence)
   aceite: .venv/bin/python -m pytest -q tests/test_swap_log.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-swap.png -- --gh3_native_swap_log=true && grep -q 'swap:' out/parity/native-swap.capture/game.log
   detalhe: cvar gh3_native_swap_log; uma linha por swap; teste. Plano F0.2.
-- [ ] T29: 60fps F0.4 — auditoria de formato (VkFormat por alvo, 16F/gamma/clear)
+- [x] T29: 60fps F0.4 — auditoria de formato (VkFormat por alvo, 16F/gamma/clear)
   aceite: .venv/bin/python -m pytest -q tests/test_format_log.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-format.png -- --gh3_native_format_log=true && grep -q 'VK_FORMAT_' out/parity/native-format.capture/game.log
   detalhe: logar VkFormat por alvo uma vez; teste. Plano F0.4.
 - [ ] T31: 60fps F1.1b — controlador dinamico de resolucao 0.65-1.0 (alvo 16.7 ms)

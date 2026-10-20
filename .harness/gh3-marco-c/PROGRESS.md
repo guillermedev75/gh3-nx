@@ -209,3 +209,10 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - verificado: aceite exit 0; 5.026 linhas `swap:` na captura (ex.: `frame=4992 ... resolve=41 ... fence:10.437ms presented:1`); suíte 179 passed; imagem white=0,014 stddev=55,2. Playbook §8/F0.2.
 - pendente: usar o log para fechar o verde (F0.3/F3.1); nenhum ganho de FPS nesta tarefa (só diagnóstico).
 - 2026-10-20 00:17 T27 ✅ aceita (iter 2)
+
+### T29 — tentativa 1
+- feito: `src/native/native_format_log.h` (formato puro, tabela de VkFormat + `Name`, testado sem SDK), cvar `gh3_native_format_log` (padrão false) e log `[native] format:` no `CreateOrGetRenderTarget` (uma linha por alvo criado); 8 testes em `tests/test_format_log.py`; playbook §8/F0.4.
+- decisões: logar na criação (uma vez por alvo, não por quadro) para a auditoria custar zero no Switch; `static_assert` no renderer liga cada valor numérico do header ao `VK_FORMAT_*` real (header compila sem SDK); flags `hdr16f`/`gamma`/`clear`/`scene`/`alias` cobrem o que o F1.4 vai cortar.
+- verificado: aceite exit 0 (8 testes, captura nativa, 10 linhas `format:` com `VK_FORMAT_`); suíte 187 passed. Alvos vistos: cor `R8G8B8A8_UNORM`, profundidade `D32_SFLOAT_S8_UINT`; nenhum 16F no caminho atual.
+- pendente: nada; F1.4 (T33) usa este log para decidir os cortes.
+- 2026-10-20 00:26 T29 ✅ aceita (iter 3)

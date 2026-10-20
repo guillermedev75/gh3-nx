@@ -249,3 +249,22 @@ swap: frame=4992 fb=0CB68000 1280x720 fmt:37 src=1280x720 clear=-@00000000 depth
   do T15 no alvo; `fence` = espera de fence acumulada no quadro (`frame_fence_wait_ns`).
 - Custo no Mac (corrida de ~5.000 swaps): 178 testes verdes; captura white=0,014 stddev=55,2. A linha é
   `info` por swap, então ligue só na investigação (F0.3/F3.1), não no pacote do Switch.
+
+### F0.4 — auditoria de formato (2026-10-20)
+
+`--gh3_native_format_log=true` (cvar `gh3_native_format_log`, padrão false) escreve uma linha
+`[native] format: ...` **quando um alvo é criado** (uma por alvo, não por quadro), formatada por
+`src/native/native_format_log.h` (puro, testado sem SDK; o renderer tem `static_assert` ligando cada
+valor de `VkFormat` usado ao enum do Vulkan):
+
+```
+format: frame=1234 color base:A0000000 pitch:1280 1280x720 samples:1 guest:6
+        vk:VK_FORMAT_R8G8B8A8_UNORM hdr16f:0 gamma:1 clear:color=0 scene:0 alias:0
+```
+
+- `vk` = VkFormat real da imagem (colorido ou profundidade), `guest` = enum xenos de origem; `hdr16f`
+  marca os alvos `R16G16B16A16_SFLOAT` (candidatos a cortar se não houver HDR de verdade — F1.4),
+  `gamma` o `k_8_8_8_8_GAMMA`, `clear` o que o `CreateOrGetRenderTarget` limpa ao criar (cor 0 ou
+  profundidade 1.0), `scene`/`alias` o scene scale (T16) e o alias de amostras (T15).
+- Captura nativa (10 alvos): cor `R8G8B8A8_UNORM`, profundidade `D32_SFLOAT_S8_UINT` (com
+  `gh3_native_depth24` aparece `D24_UNORM_S8_UINT`/`D32_SFLOAT`); nenhum alvo 16F no caminho atual.
