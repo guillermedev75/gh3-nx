@@ -200,3 +200,12 @@ Resumo acionável:
 - **T24:** alvos pequenos (sombra/efeito) eram criados com 2048 linhas por scissor default; o cap pela
   altura real do alvo 1x (`known_1x_height`/`AliasHeight`) reduz o render area sem mudar a imagem.
 - **Fallback verde** do guest output trocado por preto (piscadas entre telas).
+
+
+### F1.3 — overdraw exato (2026-10-19)
+
+O GH3 tem muitos draws que não mudam nenhum pixel: blend `0×src + 1×dst` (ADD) em todos os canais
+escritos, sem escrita de Z/stencil. O `Draw` agora os pula (`src/native/native_invisible.h`, decisão pura
+testada). Na captura local a quente: **53.248 draws pulados** (~17/quadro a ~35 fps), imagem idêntica
+(white=0,001, stddev=50,0). Alpha test NEVER idem; desenhos que escrevem Z/stencil não são pulados.
+No Mac o ganho de GPU é ~0 (não é o limite); o ganho real (CPU do ring + blend) é medido no Switch (F5).

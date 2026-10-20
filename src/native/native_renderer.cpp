@@ -59,6 +59,7 @@ extern "C" {
 
 #include "native_geometry_shaders.h"
 #include "native_edram_samples.h"
+#include "native_invisible.h"
 #include "native_scene_scale.h"
 #include "native_primitive_expand.h"
 #include "native_hash.h"
@@ -4062,6 +4063,31 @@ void Renderer::Impl::Draw(const uint32_t* immediate_indices, uint32_t immediate_
   }
 
   // Record.
+  // F1.3: draws que nao podem mudar nenhum pixel (exato). Blend 0*src+1*dst em todos os canais
+  // escritos, ou alpha test NEVER, e sem escrita de Z/stencil. Ver native_invisible.h.
+  {
+    const auto color_control = r.Get<reg::RB_COLORCONTROL>();
+    const bool alpha_never = color_control.alpha_test_enable &&
+                             color_control.alpha_func == xenos::CompareFunction::kNever;
+    const uint32_t col_mask =
+        draw_util::GetNormalizedColorMask(r, st.ps ? st.ps->writes_color_targets() : 0);
+    invisible::Blend blends[4] = {};
+    for (uint32_t i = 0; i < 4; ++i) {
+      const auto b = r.Get<reg::RB_BLENDCONTROL>(reg::RB_BLENDCONTROL::rt_register_indices[i]);
+      blends[i] = {uint32_t(b.color_srcblend), uint32_t(b.color_destblend),
+                   uint32_t(b.color_comb_fcn), uint32_t(b.alpha_srcblend),
+                   uint32_t(b.alpha_destblend), uint32_t(b.alpha_comb_fcn)};
+    }
+    const bool writes = st.depth_control.z_write_enable || st.depth_control.stencil_enable;
+    if (invisible::DrawIsInvisible(col_mask, blends, alpha_never, writes)) {
+      static uint64_t invisible_count = 0;
+      const uint64_t n = ++invisible_count;
+      if (n == 1 || (n & 0xFFF) == 0) {
+        REXLOG_INFO("[native] invisible draws: {} (alpha_never={})", n, alpha_never);
+      }
+      return skip(15);
+    }
+  }
   if (!BeginPass(targets, st.needed_height)) return skip(14);
   DrawCommand d;
   d.commands = current().main;
