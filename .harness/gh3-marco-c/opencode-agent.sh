@@ -8,7 +8,7 @@
 set -euo pipefail
 
 prompt=$(cat)
-model="${HARNESS_DEEPSEEK_MODEL:-openrouter/deepseek/deepseek-v4.1-flash-1017}"
+model="${HARNESS_DEEPSEEK_MODEL:-opencode/deepseek-v4.1-flash-free}"
 title="${HARNESS_TASK_ID:-harness}"
 
 exec npx -y opencode-ai@latest run \

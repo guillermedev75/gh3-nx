@@ -3,7 +3,7 @@
 # sendo quem commita, roda o oráculo e o aceite. As permissões (sem git commit/push) estão em opencode.json.
 CLAUDE_BIN="$RUN_DIR/opencode-agent.sh"
 HARNESS_MODEL=''
-HARNESS_DEEPSEEK_MODEL='openrouter/deepseek/deepseek-v4.1-flash-1017'
+HARNESS_DEEPSEEK_MODEL='opencode/deepseek-v4.1-flash-free'
 ORACLE_CMD='.venv/bin/python -m pytest -q tests'            # verificação completa do projeto; precisa estar verde ANTES de começar
 MAX_ITERS=50             # teto de iterações (cada uma = 1 sessão do agente com contexto limpo)
 MAX_HOURS=48              # teto de tempo de parede
