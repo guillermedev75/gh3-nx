@@ -231,3 +231,11 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - verificado: aceite exit 0 (7 testes; captura 0.65+CAS white=0,001 stddev=50,3; log `scene CAS: enabled` e `upscaling 832x468 -> 1280x720`); suíte completa 203 passed; build Mac ok.
 - pendente: custo de GPU/nitidez no Switch (F5); NRO não rebuildado (T46). Medição de FPS não faz sentido no Mac (GPU não é o limite); registrado em "Métricas em aberto" do vault.
 - 2026-10-20 02:02 T32 ✅ aceita (iter 5)
+
+### T33 — tentativa 1
+- feito: `src/native/native_format_audit.h` (puro, sem SDK) acumula bytes/pixel×amostras por alvo e os candidatos do F1.4 (16F, gamma, 64bpp, guest 24 bits guardado em 8 B/px); `tests/test_format_audit.py` (9). Ligado ao `gh3_native_format_log`: 1 linha `format audit:` por alvo novo depois do quadro 300, com memória, contagem por VkFormat, `depth24_save` e hint.
+- decisões (e por quê): logar de novo a cada alvo novo (não só por formato) para a conta final incluir os alvos da gameplay (320x2048 entra no quadro 3833); acumular só com a cvar ligada (custo zero no Switch); **não** mudar formatos: a captura mostra 16f:0/gamma:0/bpp64:0 no caminho — não há alvo caro sem HDR para cortar. O custo real é profundidade de 24 bits em D32_SFLOAT_S8_UINT (~35,5 MiB), que o `gh3_native_depth24` já corta e o `switch/gh3.toml` já liga; o Mac fica em 32 bits para a paridade.
+- verificado: aceite exit 0 (9 testes; captura; `format audit:` no log: 10 alvos, 82,3 MiB, 16f:0, depth24_save:35,5 MiB); suíte **212 passed**; build Mac ok.
+- pendente: observação fora do escopo — a captura ainda cria depth `1280x2048` e `1040x2048` (o cap do T24 só vale para alias `alias_msaa`).
+- 2026-10-20 02:12 T33 (iter 1)
+- 2026-10-20 02:16 T33 ✅ aceita (iter 6)

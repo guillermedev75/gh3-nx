@@ -269,6 +269,35 @@ format: frame=1234 color base:A0000000 pitch:1280 1280x720 samples:1 guest:6
 - Captura nativa (10 alvos): cor `R8G8B8A8_UNORM`, profundidade `D32_SFLOAT_S8_UINT` (com
   `gh3_native_depth24` aparece `D24_UNORM_S8_UINT`/`D32_SFLOAT`); nenhum alvo 16F no caminho atual.
 
+### F1.4 — auditoria de formatos (2026-10-20)
+
+`--gh3_native_format_log=true` também liga `src/native/native_format_audit.h` (puro, testado sem SDK):
+os alvos criados pelo `CreateOrGetRenderTarget` entram num acumulador e o `Swap` loga uma linha
+`[native] format audit:` a cada alvo novo depois do quadro 300 (o boot/menu já criou os seus; alvos da
+gameplay entram na conta seguinte). Custou uma linha a cada poucos milhares de quadros, só na investigação.
+
+```
+format audit: frame=3833 targets:10 color:4 depth:6 bytes:86343680 memory:82.3MiB
+  formats:VK_FORMAT_R8G8B8A8_UNORM=4,VK_FORMAT_D32_SFLOAT_S8_UINT=6
+  16f:0 gamma:0 bpp64:0 depth_guest24:6 depth_stored_wide:6 depth24_save:35.5MiB
+  expensive:depth24-storage hint:gh3_native_depth24=true ...
+```
+
+- `bytes`/`memory` = bytes/pixel do VkFormat × largura × altura × amostras, somado por alvo (é espaço
+  de GPU, não tráfego por quadro).
+- `16f` conta `R16G16B16A16_SFLOAT`, `gamma` o guest `k_8_8_8_8_GAMMA`, `bpp64` os guests
+  `16_16_16_16`/`16_16_16_16_FLOAT`/`32_32_FLOAT` — os candidatos a corte do F1.4.
+- `depth_guest24` é a profundidade de 24 bits do guest; `depth_stored_wide` é quantas estão em 8 B/px
+  (`D32_SFLOAT_S8_UINT`). `depth24_save` é o que o `gh3_native_depth24=true` devolve (8 → 4 B/px).
+- `expensive` só lista o que existe (`none` quando não há nada a cortar), e o `hint` aponta a cvar.
+
+Medido na captura nativa (música Slow Ride, 10 alvos): **nenhum 16F, nenhum gamma e nenhum guest de
+64bpp** no caminho atual — não há alvo caro sem HDR para eliminar. O único custo grande é a profundidade:
+6 alvos de 24 bits guardados em `D32_SFLOAT_S8_UINT` (~71 MiB, dos quais **35,5 MiB** voltam com
+`gh3_native_depth24`), cvar que o `switch/gh3.toml` já liga (Mac fica em 32 bits, para a paridade de
+referência). Observação fora do escopo do F1.4: a captura ainda cria um depth `1280x2048` e outro
+`1040x2048` (T24 só capa o alias `alias_msaa`, não esses).
+
 ### F1.1b — controlador dinâmico da escala da cena (2026-10-20)
 
 `--gh3_native_scene_dynamic=true` (cvar `gh3_native_scene_dynamic`, padrão false no código e true no

@@ -117,7 +117,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [x] T32: 60fps F1.1c — CAS no blit da cena escalada
   aceite: .venv/bin/python -m pytest -q tests/test_scene_cas.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-cas.png -- --gh3_native_scene_scale=0.65 --gh3_native_scene_cas=true && python3 tools/image_stats.py out/parity/native-cas.png --max-white 0.15 --min-stddev 20 && grep -q 'scene CAS' out/parity/native-cas.capture/game.log
   detalhe: sharpening/CAS no blit (o blit atual e' LINEAR); teste/captura. Plano F1.1c.
-- [ ] T33: 60fps F1.4 — auditoria de formatos: 16F sem HDR, gamma, depth24, 64bpp
+- [x] T33: 60fps F1.4 — auditoria de formatos: 16F sem HDR, gamma, depth24, 64bpp
   aceite: .venv/bin/python -m pytest -q tests/test_format_audit.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-audit.png -- --gh3_native_format_log=true && grep -q 'format audit:' out/parity/native-audit.capture/game.log
   detalhe: eliminar alvo caro sem HDR real; medir. Plano F1.4.
 - [ ] T34: 60fps F2.1 — construir SPIRV-Tools/opt no Mac e no devkitA64

@@ -57,6 +57,7 @@ extern "C" {
 }
 #endif
 
+#include "native_format_audit.h"
 #include "native_format_log.h"
 #include "native_geometry_shaders.h"
 #include "native_swap_log.h"
@@ -698,6 +699,9 @@ struct Renderer::Impl {
     uint32_t resolve_dst = 0;
   };
   SwapFrame swap_frame;
+  // F1.4: conta por formato (uma vez por conjunto de formatos, ver o Swap).
+  format_audit::Audit format_audit;
+  uint64_t format_audit_logged_targets = ~uint64_t(0);
 
   SpirvShaderTranslator::SystemConstants system_constants = {};
 
@@ -3127,6 +3131,14 @@ RenderTarget* Renderer::Impl::CreateOrGetRenderTarget(const RenderTargetKey& key
     entry.scene_scaled = scaled;
     entry.alias_msaa = key.alias_msaa;
     REXLOG_INFO("[native] {}", format_log::Format(entry));
+    format_audit::Target audit_target;
+    audit_target.vk_format = uint32_t(result->format);
+    audit_target.guest_format = key.format;
+    audit_target.width = result->width;
+    audit_target.height = result->height;
+    audit_target.samples = 1u << key.msaa;
+    audit_target.depth = key.is_depth != 0;
+    format_audit.Add(audit_target);
   }
   return result;
 }
@@ -5209,6 +5221,13 @@ void Renderer::Impl::Swap(rex::ui::Presenter* presenter, uint32_t frontbuffer, u
     entry.fence_wait_ns = frame_fence_wait_ns;
     entry.presented = presenter != nullptr && source_view != VK_NULL_HANDLE;
     REXLOG_INFO("[native] {}", swap_log::Format(entry));
+  }
+  // F1.4: a linha "format audit:" resume os alvos criados; loga de novo a cada alvo novo depois do
+  // boot/menu (quadro 300 ~ 5 s), para a conta do fim incluir os alvos da gameplay.
+  if (REXCVAR_GET(gh3_native_format_log) && frame >= 300 && !format_audit.Empty() &&
+      format_audit_logged_targets != format_audit.totals().targets) {
+    REXLOG_INFO("[native] {}", format_audit.Report(frame));
+    format_audit_logged_targets = format_audit.totals().targets;
   }
   swap_frame = {};
   // Frame boundary.
