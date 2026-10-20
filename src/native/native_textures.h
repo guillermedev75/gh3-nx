@@ -101,6 +101,9 @@ struct TextureCacheStats {
   uint64_t pending = 0;
   // Textures whose content changed after a draw of this frame had used them.
   uint64_t replaced = 0;
+  // F4.1: VkSamplers created. The cache keeps them for the whole session, so this stays at the
+  // number of distinct sampler states seen, not one per draw.
+  uint64_t samplers_created = 0;
 };
 
 class TextureCache {

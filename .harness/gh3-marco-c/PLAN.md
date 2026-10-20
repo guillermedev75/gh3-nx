@@ -144,7 +144,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [x] T41: 60fps F3.3 — resolve sem copia (depth/lazy) com restauracao
   aceite: .venv/bin/python -m pytest -q tests/test_resolve_ownership.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-resolve.png -- --gh3_native_resolve_swap=true && python3 tools/image_stats.py out/parity/native-resolve.png --max-white 0.15 --min-stddev 20
   detalhe: so quando o alvo inteiro for resolvido; restaurar conteudo; cor de fora ate paridade. Plano F3.3.
-- [ ] T42: 60fps F4.1 — caches do ring (IM_LOAD, sampler, query, zero log)
+- [x] T42: 60fps F4.1 — caches do ring (IM_LOAD, sampler, query, zero log)
   aceite: .venv/bin/python -m pytest -q tests/test_ring_caches.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-caches.png && python3 tools/image_stats.py out/parity/native-caches.png --max-white 0.15 --min-stddev 20
   detalhe: per-draw caches do nfsmw; zero log no ring. Plano F4.1.
 - [ ] T43: 60fps F4.2 — function ordering + non_volatile_as_local + A/B -O2

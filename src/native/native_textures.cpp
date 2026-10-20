@@ -8,6 +8,7 @@
 
 #include "native_textures.h"
 #include "native_hash.h"
+#include "native_ring_caches.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1983,10 +1984,20 @@ VkSampler TextureCache::GetSampler(const xenos::xe_gpu_texture_fetch_t& fetch,
   if (aniso != xenos::AnisoFilter::kDisabled) {
     mag_linear = min_linear = mip_linear = true;
   }
-  uint32_t key = uint32_t(clamp_x) | (uint32_t(clamp_y) << 3) | (uint32_t(clamp_z) << 6) |
-                 (uint32_t(border) << 9) | (uint32_t(mag_linear) << 11) |
-                 (uint32_t(min_linear) << 12) | (uint32_t(mip_linear) << 13) |
-                 (uint32_t(aniso) << 14) | (mip_min_level << 17) | (uint32_t(mip_base_map) << 21);
+  // F4.1: a chave é pura (native_ring_caches.h) e a cache (im.samplers) vive a sessão toda, então
+  // um sampler criado num quadro é reusado nos seguintes para o mesmo estado.
+  ring_caches::SamplerParams params;
+  params.clamp_x = uint8_t(clamp_x);
+  params.clamp_y = uint8_t(clamp_y);
+  params.clamp_z = uint8_t(clamp_z);
+  params.border = uint8_t(border);
+  params.mag_linear = mag_linear;
+  params.min_linear = min_linear;
+  params.mip_linear = mip_linear;
+  params.aniso = uint8_t(aniso);
+  params.mip_min_level = uint8_t(mip_min_level);
+  params.mip_base_map = mip_base_map;
+  const uint32_t key = ring_caches::SamplerKey(params);
   auto it = im.samplers.find(key);
   if (it != im.samplers.end()) {
     return it->second;
@@ -2028,6 +2039,7 @@ VkSampler TextureCache::GetSampler(const xenos::xe_gpu_texture_fetch_t& fetch,
     return VK_NULL_HANDLE;
   }
   im.samplers.emplace(key, sampler);
+  ++stats_.samplers_created;
   return sampler;
 }
 

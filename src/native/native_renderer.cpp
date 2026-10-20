@@ -72,6 +72,7 @@ extern "C" {
 #include "native_pipeline_prewarm.h"
 #include "native_present_ring.h"
 #include "native_resolve_ownership.h"
+#include "native_ring_caches.h"
 
 // T32: o SPIR-V que o próprio SDK usa no presenter para CAS (FidelityFX), reaproveitado no blit que
 // sobe a cena escalada. O VS desenha o retângulo em NDC e o PS lê 9 texels e aplica o CAS.
@@ -436,6 +437,9 @@ struct Renderer::Impl {
     uint64_t head;  // of the first 16 words
   };
   std::unordered_map<uint64_t, KnownShader> shaders_by_location;
+  // F4.1: o microcódigo que vem no próprio anel (IM_LOAD_IMMEDIATE) era trocado e hasheado a
+  // cada pacote. A cache é exata (memcmp) e guarda o shader resolvido.
+  ring_caches::ImLoadCache im_load_cache;
   VulkanShader* active_vs = nullptr;
   VulkanShader* active_ps = nullptr;
   bool specialize_signs = false;
@@ -555,6 +559,11 @@ struct Renderer::Impl {
   };
   std::vector<ProfileSegment> profile_segments[kSubmissionSlots];
   bool profile_closed[kSubmissionSlots] = {};
+  // F4.1: só as queries que o slot usou da última vez são limpas (o pool inteiro era 512 por
+  // quadro perfilado). profile_query_used guarda o que o slot escreveu na última vez.
+  ring_caches::SelectiveQueryReset profile_queries[kSubmissionSlots];
+  uint32_t profile_query_used[kSubmissionSlots] = {};
+  uint64_t profile_query_reset_count = 0;
   struct ProfileTotal {
     double ns = 0;
     uint64_t count = 0;
@@ -576,8 +585,17 @@ struct Renderer::Impl {
     auto& segments = profile_segments[slot];
     // The last query is kept for the closing timestamp.
     if (segments.size() + 1 >= kProfileQueries) return;
+    const uint32_t index = uint32_t(segments.size());
+    ring_caches::SelectiveQueryReset::Plan reset;
+    if (profile_queries[slot].NeedReset(index, &reset)) {
+      // Bloco além do que o slot usou da última vez: precisa ser limpo antes da escrita.
+      dfn().vkCmdResetQueryPool(cmd(), profile_pool, slot * kProfileQueries + reset.first,
+                                reset.count);
+      profile_query_reset_count += reset.count;
+    }
     dfn().vkCmdWriteTimestamp(cmd(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, profile_pool,
-                              slot * kProfileQueries + uint32_t(segments.size()));
+                              slot * kProfileQueries + index);
+    profile_queries[slot].OnWrite(index);
     segments.push_back({key, 0});
   }
   void ProfileDraw() {
@@ -1235,8 +1253,14 @@ struct Renderer::Impl {
       profile_segments[slot].clear();
       profile_closed[slot] = false;
       if (profile_frame && profile_pool) {
-        dfn().vkCmdResetQueryPool(s.setup, profile_pool, slot * kProfileQueries,
-                                  kProfileQueries);
+        // F4.1: só o que este slot escreveu da última vez pode guardar resultado velho.
+        const ring_caches::SelectiveQueryReset::Plan reset =
+            profile_queries[slot].Begin(profile_query_used[slot]);
+        if (reset.count) {
+          dfn().vkCmdResetQueryPool(s.setup, profile_pool, slot * kProfileQueries + reset.first,
+                                    reset.count);
+          profile_query_reset_count += reset.count;
+        }
       }
     }
     // Everything the setup command buffer uploads is visible to the draws.
@@ -1280,9 +1304,17 @@ struct Renderer::Impl {
     {
       uint32_t slot = uint32_t(submission_number % kSubmissionSlots);
       if (profile_pool && !profile_segments[slot].empty()) {
+        const uint32_t index = uint32_t(profile_segments[slot].size());
+        ring_caches::SelectiveQueryReset::Plan reset;
+        if (profile_queries[slot].NeedReset(index, &reset)) {
+          dfn().vkCmdResetQueryPool(s.main, profile_pool, slot * kProfileQueries + reset.first,
+                                    reset.count);
+          profile_query_reset_count += reset.count;
+        }
         dfn().vkCmdWriteTimestamp(s.main, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, profile_pool,
-                                  slot * kProfileQueries +
-                                      uint32_t(profile_segments[slot].size()));
+                                  slot * kProfileQueries + index);
+        profile_queries[slot].OnWrite(index);
+        profile_query_used[slot] = profile_queries[slot].Used();
         profile_closed[slot] = true;
       }
     }
@@ -3585,9 +3617,11 @@ bool Renderer::Impl::BeginPass(const PassTargets& targets, uint32_t wanted_heigh
   info.pDepthAttachment = targets.depth ? &depth : nullptr;
   info.pStencilAttachment =
       targets.depth && HasStencil(targets.depth->format) ? &depth : nullptr;
-  dfn().vkCmdBeginRendering(cmd(), &info);
+  // F4.1: o carimbo (e a limpeza seletiva de queries que ele pode pedir) fica fora do render
+  // pass — vkCmdResetQueryPool não pode ser gravado dentro de um.
   ProfileMark((kProfilePass << 60) | ((uint64_t(height) & 0xFFF) << 48) |
               (ProfileTargetBits(targets.color[0]) << 24) | ProfileTargetBits(targets.depth));
+  dfn().vkCmdBeginRendering(cmd(), &info);
   in_pass = true;
   pass_extent = {width, height};
   ++stats().render_passes;
@@ -3955,19 +3989,6 @@ bool Renderer::Impl::BuildDrawSetup(uint32_t initiator_value) {
                                       (guest_msaa >= 1 ? 8 : 16) * surface.scale_y
                                 : 2048;
     targets.depth = GetRenderTarget(key, std::min(needed_height, rows));
-    {  // T9 PROBE (temporário)
-      static std::unordered_set<uint64_t> seen;
-      uint64_t k = uint64_t(depth_control.value) ^ (uint64_t(key.base_tiles) << 32) ^
-                   (uint64_t(key.pitch) << 44) ^ (uint64_t(key.format) << 60);
-      if (seen.insert(k).second && seen.size() < 300) {
-        REXLOG_INFO("[T9] draw depth base {} pitch {} fmt {} z_en {} z_write {} zfunc {} stencil {} "
-                    "vp z {}..{} colormask {:04X}",
-                    uint32_t(key.base_tiles), uint32_t(key.pitch), uint32_t(key.format),
-                    uint32_t(depth_control.z_enable), uint32_t(depth_control.z_write_enable),
-                    uint32_t(depth_control.zfunc), uint32_t(depth_control.stencil_enable),
-                    st.viewport.z_min, st.viewport.z_max, color_mask);
-      }
-    }
   }
   // T24: os draws 1x com scissor explicito revelam a altura real do alvo (180-720). Guardar no
   // alvo para que os draws 4x com scissor default (8192) nao paguem 2048 linhas na proxima volta.
@@ -4967,20 +4988,6 @@ void Renderer::Impl::Resolve() {
   x1 = rex::align(x1, 8);
   y1 = rex::align(y1, 8);
   x1 = std::min(x1, int32_t(surface_info.surface_pitch));
-  {  // T9 PROBE (temporário)
-    static std::unordered_set<uint64_t> seen;
-    auto off = r.Get<reg::PA_SC_WINDOW_OFFSET>();
-    uint64_t k = uint64_t(surface_info.surface_pitch) ^ (uint64_t(surface_info.msaa_samples) << 14) ^
-                 (uint64_t(uint32_t(x0) & 0xFFF) << 16) ^ (uint64_t(uint32_t(x1) & 0xFFF) << 28) ^
-                 (uint64_t(uint32_t(y1) & 0xFFF) << 40) ^ (uint64_t(off.value & 0xFFF) << 52);
-    if (seen.insert(k).second && seen.size() < 400) {
-      REXLOG_INFO("[T9] resolve-in pitch {} guest_msaa {} rect {},{}-{},{} woff {} {} en {} scissor {},{} {}x{}",
-                  uint32_t(surface_info.surface_pitch), uint32_t(surface_info.msaa_samples), x0, y0, x1,
-                  y1, int32_t(off.window_x_offset), int32_t(off.window_y_offset),
-                  uint32_t(r.Get<reg::PA_SU_SC_MODE_CNTL>().vtx_window_offset_enable),
-                  scissor.offset[0], scissor.offset[1], scissor.extent[0], scissor.extent[1]);
-    }
-  }
   if (x0 >= x1 || y0 >= y1) {
     return;
   }
@@ -5079,23 +5086,6 @@ void Renderer::Impl::Resolve() {
                        decision == ownership::Decision::kHandOff ? ownership::Decision::kCopy
                                                                  : decision,
                        0);
-    }
-  }
-  {  // T9 PROBE (temporário)
-    static std::unordered_set<uint64_t> seen;
-    auto dp = r.Get<reg::RB_COPY_DEST_PITCH>();
-    uint64_t k = (uint64_t(dest_base) << 32) ^ (uint64_t(dest_info.value) << 8) ^ source_key.format ^
-                 (uint64_t(msaa) << 5) ^ (uint64_t(is_depth) << 7) ^ (uint64_t(x1) << 40) ^ (uint64_t(y1) << 50);
-    if (seen.insert(k).second && seen.size() < 400) {
-      REXLOG_INFO("[T9] resolve src fmt {} depth {} msaa {} pitch {} base {} rect {},{}-{},{} -> dest {:08X} "
-                  "fmt {} bias {} swap {} endian {} pitch {}x{} cmd {} sample {} clear c{} d{}",
-                  uint32_t(source_key.format), is_depth, msaa, uint32_t(surface_info.surface_pitch), uint32_t(source_key.base_tiles),
-                  x0, y0, x1, y1, dest_base, uint32_t(dest_info.copy_dest_format),
-                  int32_t(dest_info.copy_dest_exp_bias), uint32_t(dest_info.copy_dest_swap),
-                  uint32_t(dest_info.copy_dest_endian), uint32_t(dp.copy_dest_pitch),
-                  uint32_t(dp.copy_dest_height), uint32_t(copy_control.copy_command),
-                  uint32_t(copy_control.copy_sample_select), uint32_t(copy_control.color_clear_enable),
-                  uint32_t(copy_control.depth_clear_enable));
     }
   }
   if (copy && !handed_off) {
@@ -5372,16 +5362,6 @@ void Renderer::Impl::Resolve() {
                 ? xenos::Float20e4To32(depth24)
                 : xenos::UNorm24To32(depth24);
         a.clearValue.depthStencil.stencil = clear & 0xFF;
-        {  // T9 PROBE (temporário)
-          static std::unordered_set<uint64_t> seen;
-          uint64_t k = (uint64_t(clear) << 16) ^ depth_target->key.format ^ (uint64_t(depth_target->key.base_tiles) << 4);
-          if (seen.insert(k).second && seen.size() < 100) {
-            REXLOG_INFO("[T9] depth clear fmt {} base {} pitch {} raw {:08X} -> {} host fmt {}",
-                        uint32_t(depth_target->key.format), uint32_t(depth_target->key.base_tiles),
-                        uint32_t(depth_target->key.pitch), clear, a.clearValue.depthStencil.depth,
-                        int(depth_target->format));
-          }
-        }
       }
       if (color_target) {
         VkClearAttachment& a = attachments[count++];
@@ -5499,30 +5479,6 @@ void Renderer::Impl::Swap(rex::ui::Presenter* presenter, uint32_t frontbuffer, u
   if (fetch.type == xenos::FetchConstantType::kTexture && fetch.base_address) {
     address = fetch.base_address << 12;
     guest_swizzle = fetch.swizzle;
-  }
-  {  // T9 PROBE (temporário)
-    static std::vector<uint32_t> show;
-    static bool parsed = false;
-    static uint64_t swaps = 0;
-    if (!parsed) {
-      parsed = true;
-      if (const char* e = getenv("GH3_T9_SHOW")) {
-        std::string s = e;
-        size_t p = 0;
-        while (p < s.size()) {
-          size_t q = s.find(',', p);
-          if (q == std::string::npos) q = s.size();
-          show.push_back(uint32_t(strtoul(s.substr(p, q - p).c_str(), nullptr, 16)));
-          p = q + 1;
-        }
-      }
-    }
-    ++swaps;
-    if (!show.empty()) {
-      uint32_t a = show[(swaps / 100) % show.size()];
-      if (a) address = a & 0x1FFFFFFF;
-      if (a & 0x80000000u) guest_swizzle = 0x6DB;  // AAAA
-    }
   }
   uint32_t source_width = 0, source_height = 0;
   VkImageView source_view =
@@ -6112,6 +6068,24 @@ std::string Renderer::TakeResolveOwnershipReport() {
   return impl_ ? ownership::Format(impl_->resolve_ownership) : std::string();
 }
 
+std::string Renderer::TakeRingCacheReport() {
+  if (!impl_) return std::string();
+  const ring_caches::ImLoadStats& im = impl_->im_load_cache.stats();
+  ring_caches::Report report;
+  report.im_hits = im.hits;
+  report.im_misses = im.misses;
+  report.im_evictions = im.evictions;
+  report.samplers_created = impl_->textures.stats().samplers_created;
+  if (impl_->profile_pool && impl_->profile_query_reset_count) {
+    report.query_resets = impl_->profile_query_reset_count;
+    report.query_capacity = Renderer::Impl::kProfileQueries;
+  }
+  if (!im.hits && !im.misses && !report.samplers_created) {
+    return std::string();
+  }
+  return "ring caches: " + ring_caches::Format(report);
+}
+
 std::string Renderer::TakeShaderSimplifyReport() {
   if (!impl_) {
     return std::string();
@@ -6154,6 +6128,21 @@ void Renderer::LoadShader(xenos::ShaderType type, const uint32_t* ucode, uint32_
   // too slow, so each location is verified in full once a frame, and within
   // the frame by its first words: shaders are replaced between screens, not
   // in the middle of drawing one.
+  // F4.1: IM_LOAD_IMMEDIATE (guest_address == 0) não tem endereço para localizar o shader, então
+  // cada pacote trocava os bytes do microcódigo inteiro e calculava o XXH3. A cache responde
+  // pelo conteúdo (assinatura barata + memcmp de todas as palavras) e devolve o shader já
+  // resolvido.
+  if (!guest_address) {
+    if (void* hit = impl_->im_load_cache.Lookup(uint32_t(type), ucode, dword_count)) {
+      VulkanShader* shader = static_cast<VulkanShader*>(hit);
+      if (type == xenos::ShaderType::kVertex) {
+        impl_->active_vs = shader;
+      } else {
+        impl_->active_ps = shader;
+      }
+      return;
+    }
+  }
   uint64_t location = 0;
   uint64_t sample = 0;
   uint64_t head = 0;
@@ -6200,6 +6189,8 @@ void Renderer::LoadShader(xenos::ShaderType type, const uint32_t* ucode, uint32_
   }
   if (location) {
     impl_->shaders_by_location[location] = {shader, sample, impl_->frame, head};
+  } else {
+    impl_->im_load_cache.Insert(uint32_t(type), ucode, dword_count, shader);
   }
 }
 

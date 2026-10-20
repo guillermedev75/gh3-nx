@@ -570,3 +570,32 @@ de memória).
   único exercitado, e a paridade é a de antes. O F3.3 é uma guarda para quando o alvo inteiro for
   resolvido; para render ganho real no GH3 seria preciso reduzir a alocação do alvo 1x de profundidade
   à altura usada (`known_1x_height`) — tarefa à parte, com risco no reuso do alvo.
+
+### F4.1 — caches por draw no anel: IM_LOAD, sampler, query, zero log (2026-10-20)
+
+No nfsmw-nx os mesmos quatro cortes valeram ~25 ms/s de thread do anel (IM_LOAD sem memcmp) e 1,2 ms
+(menos resets de query) — `docs/performance-history.md` §5. No GH3 o consumidor do anel é
+`src/native/gh3_native_system.cpp` + `native_renderer.cpp` (tudo no thread do anel), e a política pura
+ficou em **`src/native/native_ring_caches.h`** (compila sem SDK/GPU; `tests/test_ring_caches.py`).
+
+- **IM_LOAD_IMMEDIATE** (`guest_address == 0`): cada pacote trocava os bytes do microcódigo inteiro,
+  calculava o XXH3 e procurava o shader no mapa. `ring_caches::ImLoadCache` (2 tipos × 32 conjuntos ×
+  4 vias) escolhe a via por uma assinatura de tamanho + 4 palavras e **só aceita com todas as palavras
+  iguais (memcmp)**; assinatura igual com conteúdo diferente é falta, nunca shader errado. O caminho
+  por endereço (`shaders_by_location`, já existente) não passa pela cache: ali a verificação por
+  cabeçalho + XXH3 uma vez por quadro continua mais barata.
+- **Sampler entre quadros**: a chave do estado virou `ring_caches::SamplerKey()` (pura) e a cache
+  `TextureCache::Impl::samplers` vale a sessão toda; `stats_.samplers_created` conta quantos
+  `vkCreateSampler` aconteceram.
+- **Query resets seletivos**: com `gh3_native_gpu_profile` o pool de 512 timestamps era limpo inteiro
+  a cada quadro perfilado. `ring_caches::SelectiveQueryReset` limpa no começo só o que **aquele slot**
+  escreveu na última vez e, se o quadro usar mais, em blocos de 32 antes de cada escrita. O carimbo do
+  render pass passou a ser gravado **antes** do `vkCmdBeginRendering` (a limpeza de query não pode
+  dentro de um render pass).
+- **Zero log no anel**: saíram os cinco probes `[T9]` (cada um mantinha um `static unordered_set` e
+  hashing por draw/resolve/swap, mesmo depois do teto de linhas). O que sobra do anel é o relatório de
+  10 s (`ring caches: ...`), emitido fora do thread do anel.
+- **Medido no Mac (captura T42, 80 s)**: **110.884 acertos / 110.891 IM_LOAD_IMMEDIATE** (~1.400/s),
+  7 faltas, 0 evictions; **10 samplers criados** a sessão toda; com o perfil de GPU ligado, **~30-50
+  queries limpas por quadro perfilado em vez de 512**. A imagem não mudou (white=0,002, stddev 41,5).
+  O ganho de FPS no Switch depende da GPU (F5), mas é CPU do anel que deixa de ser gasta.

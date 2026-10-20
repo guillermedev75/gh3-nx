@@ -141,6 +141,9 @@ class Renderer {
   std::string TakePrewarmReport();
   // F3.3: resumo cumulativo do resolve de profundidade sem cópia (vazio enquanto nada foi decidido).
   std::string TakeResolveOwnershipReport();
+  // F4.1: caches do anel (IM_LOAD, samplers, limpeza seletiva das queries do perfil). Vazio
+  // enquanto nenhuma delas tiver sido usada.
+  std::string TakeRingCacheReport();
 
   // Called for every register the command ring writes, so constant uploads
   // can be reused while their registers stay unchanged.

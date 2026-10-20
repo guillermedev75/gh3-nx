@@ -653,6 +653,12 @@ class NativeGraphicsSystem final : public rex::system::IGraphicsSystem {
           REXLOG_INFO("[native] {}", ownership);
         }
       }
+      {
+        std::string ring_caches = renderer_.TakeRingCacheReport();
+        if (!ring_caches.empty()) {
+          REXLOG_INFO("[native] {}", ring_caches);
+        }
+      }
       uint64_t frames = std::max<uint64_t>(swaps_ - reported_swaps_before_, 1);
       uint64_t gpu_count =
           std::max<uint64_t>(s.gpu_submissions - reported_render_.gpu_submissions, 1);
