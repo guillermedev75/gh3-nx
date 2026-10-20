@@ -515,3 +515,29 @@ cada quadro) e o **refresh do guest output**
   present (F3.2/T40) depende desta linha medida **no Switch** (F5); no Mac ela não justifica nada.
 - Cuidado ao ler: ns e contagem são trocados em átomos separados, então uma espera que começa entre as
   duas trocas pode cair na janela seguinte (erro de no máximo uma espera por relatório).
+
+### F3.2 — anel de saída (present) com 3 slots, conferido e preso ao SDK (2026-10-20)
+
+O F3.2 pedia "present ring 3 output slots (1 submit/frame, IMMEDIATE no Switch)" **se o F3.1
+justificasse**. A premissa de um "command buffer + fence único" no present era o **fallback de cor de
+teste** (`ClearOutput`), como o T17 já tinha mostrado: o gameplay apresenta pelo `VulkanPresenter` do
+SDK, que **já tem** o anel — `PaintContext::kSubmissionCount = 3` submissões de paint com um
+`vkResetCommandPool`/fence por slot, uma submissão por quadro, `minImageCount = max(3,
+minImageCount)`, e o mailbox de guest output também com 3 imagens. A cada quadro ele espera só a
+submissão do slot reutilizado (`current - 3`), não todas.
+
+- **`src/native/native_present_ring.h`** (puro, testado sem SDK): `kOutputSlots = 3`,
+  `PlanSubmission(submission, slots)` (slot = `submission % slots`, espera a submissão `- slots` só
+  quando o slot é reutilizado; `slots = 1` reproduz o comportamento antigo) e a linha de log.
+- **Fiação** (`native_renderer.cpp`): `static_assert` de `VulkanPresenter::kMaxActiveGuestOutputImageVersions
+  == kOutputSlots` (se o SDK mudar o anel, o build acusa), e a linha de inicialização
+  `[native] present ring: 3 output slots (3 mailbox images, 1 submit/frame, immediate on/off), 4 work
+  slots`. O log antigo (que dizia "present ring: 4 slots" para o `kSubmissionSlots`) virou
+  `[native] work ring: 4 slots`: são anéis diferentes e o plano proíbe confundi-los ou acrescentar um
+  quarto work slot (o nfsmw quebrou a imagem com isso). `switch/gh3.toml` declara
+  `vulkan_allow_present_mode_immediate = true` (já era o padrão do SDK; o Mac desliga em
+  `run-gh3.command` porque IMMEDIATE/mailbox em tela cheia travam o MoltenVK).
+- **Medido no Mac (captura T40)**: log verde, imagem idêntica (white=0,001, stddev=46,2). Com a linha
+  do F3.1 em 0-2 esperas por janela de 10 s, **não há o que ganhar** com outro anel aqui; o quarto
+  slot/thread de apresentação continuam proibidos. A confirmação no Switch (IMMEDIATE/Wait do anel)
+  fica para a F5, como no F3.1.

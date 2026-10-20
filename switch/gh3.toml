@@ -8,6 +8,11 @@
 # correct but far too slow to play (1-5 fps).
 gh3_renderer = "native"
 
+# Present (F3.2): o presenter do SDK apresenta de um anel de 3 slots de saída, um submit por quadro,
+# e espera só o slot reutilizado. IMMEDIATE quando o NVK oferece (não espera o vblank); já é o padrão
+# do SDK, escrito aqui para o pacote não depender do padrão. Nunca um quarto work slot.
+vulkan_allow_present_mode_immediate = true
+
 # One sample per pixel; true renders the game's multisampled targets with their samples.
 gh3_native_msaa = false
 # O palco (superfície 4x de pitch P) com 1 amostra por pixel de guest, subindo por blit para o alvo 1x de

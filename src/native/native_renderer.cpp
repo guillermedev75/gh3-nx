@@ -70,6 +70,7 @@ extern "C" {
 #include "native_spirv_opt.h"
 #include "native_shader_simplify.h"
 #include "native_pipeline_prewarm.h"
+#include "native_present_ring.h"
 
 // T32: o SPIR-V que o próprio SDK usa no presenter para CAS (FidelityFX), reaproveitado no blit que
 // sobe a cena escalada. O VS desenha o retângulo em NDC e o PS lê 9 texels e aplica o CAS.
@@ -165,6 +166,10 @@ static_assert(uint32_t(VK_FORMAT_R32G32_SFLOAT) == gh3::native::format_log::kR32
 static_assert(uint32_t(VK_FORMAT_D32_SFLOAT) == gh3::native::format_log::kD32Sfloat);
 static_assert(uint32_t(VK_FORMAT_D24_UNORM_S8_UINT) == gh3::native::format_log::kD24UnormS8Uint);
 static_assert(uint32_t(VK_FORMAT_D32_SFLOAT_S8_UINT) == gh3::native::format_log::kD32SfloatS8Uint);
+// F3.2: o anel de saída é o do presenter do SDK (3 imagens de guest output). Se o SDK mudar essa
+// contagem, o log e a política pura (native_present_ring.h) ficam errados — o build avisa aqui.
+static_assert(rex::ui::vulkan::VulkanPresenter::kMaxActiveGuestOutputImageVersions ==
+              gh3::native::present_ring::kOutputSlots);
 
 namespace gh3::native {
 namespace shaders {
@@ -1836,9 +1841,18 @@ bool Renderer::Impl::Initialize() {
   }
   REXLOG_INFO("[native] Renderer ready: {} MB stream, {} shared memory binding(s)",
               kStreamSize >> 20, shared_binding_count);
-  // O anel de submissões que já existe (fence e pool por slot): documentado para o T20 e para
-  // comparar com quem achar que há um command buffer só.
-  REXLOG_INFO("[native] present ring: {} slots", kSubmissionSlots);
+  // O anel deste renderer é o de WORK slots (um conjunto de fence, pool e descriptor pool por
+  // slot); não confundir com o anel de saída do presenter, logado abaixo.
+  REXLOG_INFO("[native] work ring: {} slots", kSubmissionSlots);
+  // F3.2: o anel de saída (present) é o do presenter do SDK — 3 imagens de guest output e 3
+  // submissões de paint, um submit por quadro, esperando só o slot reutilizado. O T39 mediu a
+  // espera (linha "present fence wait"); no Mac ela não justifica nada, no Switch fica para a F5.
+  REXLOG_INFO("[native] {}",
+              present_ring::Format(present_ring::kOutputSlots,
+                                   uint32_t(rex::ui::vulkan::VulkanPresenter::
+                                                kMaxActiveGuestOutputImageVersions),
+                                   kSubmissionSlots,
+                                   REXCVAR_GET(vulkan_allow_present_mode_immediate)));
   return true;
 }
 

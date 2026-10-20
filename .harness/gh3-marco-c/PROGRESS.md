@@ -282,3 +282,11 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - medido no Mac: 0,0-1,6 ms/10 s, 0-2 esperas por janela (~500 quadros) — no Mac o presenter não serializa; a decisão do anel (T40) depende da medida no Switch (F5).
 - pendente: NRO do Switch não rebuildado (T46); a linha no Switch só com o aparelho (F5).
 - 2026-10-20 04:20 T39 ✅ aceita (iter 12)
+
+### T40 — tentativa 1
+- feito: `src/native/native_present_ring.h` (puro: 3 slots, slot = submission % 3, espera só a submissão do slot reutilizado; `Format`) + `tests/test_present_ring.py` (8, vermelhos antes); renderer loga `present ring: 3 output slots (3 mailbox images, 1 submit/frame, immediate …), 4 work slots` com `static_assert` em `VulkanPresenter::kMaxActiveGuestOutputImageVersions`; o log antigo virou `work ring: 4 slots`; `switch/gh3.toml` declara IMMEDIATE.
+- decisões (e por quê): o anel do F3.2 **já existe no presenter do SDK** (`kSubmissionCount = 3`, mailbox 3, `minImageCount = max(3, …)`, 1 submit/quadro); T17/T39 mostraram que o "command buffer + fence único" era o fallback `ClearOutput`. Não inventar um segundo anel nem 4º work slot: T39 mediu 0-2 esperas/10 s no Mac; a decisão no Switch fica para a F5.
+- verificado: aceite exit 0 (8 testes; captura white=0,001 stddev=46,2; log `present ring: 3 output slots ...`); suíte 261 passed; build Mac ok; nenhuma dependência nova.
+- pendente: medir no Switch (F5, junto com a linha do F3.1); NRO não rebuildado (T46).
+- 2026-10-20 04:28 T40 ✅ aceita (iter 13)
+- 2026-10-20 04:33 T40 ✅ aceita (iter 13)

@@ -138,7 +138,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [x] T39: 60fps F3.1 — instrumentar present/fence do presenter
   aceite: .venv/bin/python -m pytest -q tests/test_present_wait.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-present.png && grep -q 'present fence wait' out/parity/native-present.capture/game.log
   detalhe: medir a espera por 10 s antes de qualquer anel. Plano F3.1.
-- [ ] T40: 60fps F3.2 — present ring 3 output slots (se 3.1 justificar)
+- [x] T40: 60fps F3.2 — present ring 3 output slots (se 3.1 justificar)
   aceite: .venv/bin/python -m pytest -q tests/test_present_ring.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-ring.png && python3 tools/image_stats.py out/parity/native-ring.png --max-white 0.15 --min-stddev 20 && grep -q 'present ring:' out/parity/native-ring.capture/game.log
   detalhe: 3 slots, 1 submit/frame, IMMEDIATE no Switch; nunca 4o work slot. Plano F3.2.
 - [ ] T41: 60fps F3.3 — resolve sem copia (depth/lazy) com restauracao
