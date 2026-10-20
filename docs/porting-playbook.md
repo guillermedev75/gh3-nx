@@ -395,3 +395,31 @@ traduzido antes de `vkCreateShaderModule`, com `gh3_native_spirv_opt` (padrão f
 - **Medido no Mac** (captura do T35, 720p): 75 shaders no primeiro relatório com 28,4% menos instruções e
   0 fallbacks; captura white=0,012 stddev=53,2. O ganho é de GPU (o NAK compila menos), então a medição
   de FPS que vale é a da F5 no Switch.
+
+### F2.3 — NAK do GM20B: latência 200 e peephole 8 (2026-10-20)
+
+O NAK do NVK ordenava cada leitura de textura/memória como se custasse **32 ciclos**. No Tegra X1
+(LPDDR4 compartilhada com a CPU) uma falha de cache custa centenas: o scheduler separa pouco a
+leitura do primeiro uso e deixa menos requisições em voo. O nfsmw-nx mediu, além disso, que o
+`nir_opt_peephole_select` com limite **0** só achata `if`s com os dois lados vazios — e o NAK não
+tem passe de if-para-predicado, então todo `if` que sobra vira `SSY/BRA/SYNC` de verdade.
+
+- **Já vinha na série do project8-sw fixada** (`patches/mesa-switch/0002-nak-gm20b-latency-and-flattening.patch`,
+  tirado do nfsmw-nx, MIT): latência 200 para ops de textura e de memória em GPUs anteriores a
+  Volta (SM70), `peephole_select` com limite 8 e a revisão `1 << 24` nas compiler flags para o
+  cache de shaders não reusar binários do driver antigo. Não foi criado um patch local novo porque
+  duplicar os mesmos hunks não aplicaria sobre a árvore já patcheada; o T36 tornou o caminho
+  **verificável**.
+- **Verificação**: `tests/test_nak_patch.py` e `tools/build_mesa.sh --check` conferem, no fonte do
+  Mesa que o build compila (`out/mesa`, ou `--mesa DIR`), as duas ocorrências da latência 200, o
+  limite 8 e a revisão. Sem qualquer uma delas o `--check` falha mesmo com `libvulkan.a` válida —
+  antes ele só olhava `vkCreateInstance` e não provava que o driver tinha o NAK.
+- **Ganho esperado (medido no nfsmw, não no GH3)**: leituras separadas dos consumidores e branches
+  `1.806 → 641` nos shaders. A medição que vale aqui é a **F5 no Switch** (FPS e `GPU by pass`).
+- **Risco**: achatar `if`s aumenta a pressão de registradores, e spill para memória local é caro no
+  GM20B. Conferir com `NVK_SHADER_STATS=1` que "B de memoria local" fica em 0.
+- **Fora do escopo**: o resto do pacote de draw path do nfsmw (rebinds de constant buffer, set 4 por
+  diferenças, medição `nvk_switch_dibujo`) está entrelaçado com o layout de sets daquele renderer e
+  precisa de medição no aparelho; fica como tarefa própria.
+- **Build**: `tools/build_mesa.sh` refeito com as imagens em cache (331,7 s medido); driver em
+  `out/driver-sdk/lib/{libvulkan.a,libnak_rs.a}`.

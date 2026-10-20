@@ -126,7 +126,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [x] T35: 60fps F2.2 — spirv-opt nos shaders traduzidos (validar/fallback/log)
   aceite: .venv/bin/python -m pytest -q tests/test_spirv_opt.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-opt.png -- --gh3_native_spirv_opt=true && python3 tools/image_stats.py out/parity/native-opt.png --max-white 0.15 --min-stddev 20 && grep -qE 'spirv-opt: [0-9]+ shaders, [0-9.]+% fewer' out/parity/native-opt.capture/game.log
   detalhe: spvtools::Optimizer (validar; fallback ao original; contar instrucoes). Cvar padrao false, true no Switch. Plano F2.2.
-- [ ] T36: 60fps F2.3 — NAK/draw path do nfsmw (latencia 200, peephole 8)
+- [x] T36: 60fps F2.3 — NAK/draw path do nfsmw (latencia 200, peephole 8)
   aceite: .venv/bin/python -m pytest -q tests/test_nak_patch.py && tools/build_mesa.sh --check
   detalhe: patch local no Mesa (como o 0005); build do NVK; documentar o ganho no Switch (F5). Plano F2.3.
 - [ ] T37: 60fps F2.4 — simplificar shaders (max(a,a), textureSize, branches)

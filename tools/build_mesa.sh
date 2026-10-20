@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Driver NVK do Switch (mesa-switch d4a00ea0ab3 + patches do project8-sw) → "driver SDK" do NRO.
 #   tools/build_mesa.sh                  clona out/mesa, aplica os patches, compila (Docker) e monta out/driver-sdk/lib/
-#   tools/build_mesa.sh --check [--out DIR]  sai 0 só se DIR/lib/libvulkan.a define vkCreateInstance e há libnak_rs.a
+#   tools/build_mesa.sh --check [--out DIR] [--mesa DIR]  sai 0 só se DIR/lib/libvulkan.a define vkCreateInstance,
+#                                        há libnak_rs.a e a árvore do Mesa (padrão out/mesa) tem o NAK do GM20B
+#                                        (latência 200, peephole 8, revisão do cache — F2.3)
 #   tools/build_mesa.sh --list           imprime os patches na ordem de aplicação
 # Precisa do Docker rodando. A imagem devkitA64 é amd64: num Mac ARM roda emulada (lento).
 # Patches: $P8, senão ~/gh3-refs/project8-sw, senão o clone que tools/setup_sdk.sh deixa em out/refs/.
@@ -28,7 +30,8 @@ while [ $# -gt 0 ]; do
     --list) MODE=list ;;
     --check) MODE=check ;;
     --out) OUT="$2"; shift ;;
-    *) echo "uso: $0 [--list | --check] [--out DIR]" >&2; exit 2 ;;
+    --mesa) MESA="$2"; shift ;;
+    *) echo "uso: $0 [--list | --check] [--out DIR] [--mesa DIR]" >&2; exit 2 ;;
   esac
   shift
 done
@@ -37,7 +40,31 @@ p8_patches() { (cd "$PATCHES" && ls 0*.patch); }
 local_patches() { (cd "$LOCAL_PATCHES" 2>/dev/null && ls 0*.patch); }
 patches() { p8_patches; local_patches; }
 
+# F2.3: o NAK do GM20B (patch 0002 da série do project8-sw, tirado do nfsmw-nx)
+# estima 200 ciclos para textura/memória e achata `if`s com peephole_select 8.
+# A revisão no cache de shaders invalida binários do driver antigo. Sem isso o
+# driver compila, mas perde o ganho — e o --check não provaria nada.
+check_nak() {
+  local rust="$MESA/src/nouveau/compiler/nak/opt_instr_sched_common.rs"
+  local nir="$MESA/src/nouveau/compiler/nak_nir.c"
+  local shader="$MESA/src/nouveau/vulkan/nvk_shader.c"
+  local f
+  for f in "$rust" "$nir" "$shader"; do
+    [ -f "$f" ] || { echo "sem src do Mesa em $MESA (clone do build): falta ${f#"$MESA"/}"; return 1; }
+  done
+  local lat
+  lat=$(grep -c 'if sm\.sm() < 70 { 200 } else { 32 }' "$rust" || true)
+  # Duas ocorrências: ops de textura e de memória global.
+  [ "$lat" -ge 2 ] || { echo "NAK: latência de textura/memória não é 200 em ${rust#"$MESA"/} (achei $lat)"; return 1; }
+  grep -q '\.limit = nak->sm < 70 ? 8 : 0' "$nir" \
+    || { echo "NAK: peephole_select não é 8 em ${nir#"$MESA"/}"; return 1; }
+  grep -q '(UINT64_C(1) << 24)' "$shader" \
+    || { echo "NAK: revisão do cache de shaders ausente em ${shader#"$MESA"/}"; return 1; }
+  echo "NAK GM20B: latência 200 (textura/memória), peephole 8, revisão do cache"
+}
+
 check() {
+  check_nak || return 1
   local a="$OUT/lib/libvulkan.a"
   [ -f "$a" ] || { echo "falta $a"; return 1; }
   [ -f "$OUT/lib/libnak_rs.a" ] || { echo "falta $OUT/lib/libnak_rs.a"; return 1; }

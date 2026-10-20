@@ -253,3 +253,9 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - verificado: aceite exit 0 (8 testes; captura nativa white=0,011 stddev=53,1; log `spirv-opt: 75 shaders, 28.4% fewer instructions (0 fallbacks)`); suíte completa 224 passed; build Mac ok; nenhum `did not translate`; configure do Switch ok e os dois .obj nativos compilam no devkitA64 (GCC 15.2) com os alvos `SPIRV-Tools-opt/-link/-Tools`.
 - pendente: link/NRO completo do Switch (T46) e o ganho real de GPU/FPS no aparelho (F5).
 - 2026-10-20 02:56 T35 ✅ aceita (iter 8)
+
+### T36 — tentativa 1
+- feito: `tests/test_nak_patch.py` (5: série do P8, árvore do Mesa, check real, reprova latência 32 e peephole 0) e `tools/build_mesa.sh` com `--mesa DIR` e a checagem `NAK` no `--check`; playbook §8/F2.3. NVK rebuildado (331,7 s, 2892 objetos AArch64).
+- decisões (e por quê): a latência 200 (textura/memória, SM<70), o `peephole_select` 8 e a revisão `1<<24` do cache **já vinham** no patch 0002 da série do project8-sw fixada (nfsmw-nx, MIT) — um patch local com os mesmos hunks não aplicaria sobre a árvore já patcheada, então o T36 torna o caminho verificável em vez de duplicá-lo. O `--check` antes só provava `vkCreateInstance`; agora reprova árvore sem o NAK (testado mutando cópias da árvore).
+- pendente: ganho real de GPU/FPS no Switch só na F5 (`NVK_SHADER_STATS=1`: conferir "B de memoria local" = 0); o resto do draw path do nfsmw (rebinds de constant buffer, set 4 por diferenças) não foi portado — entrelaçado com os sets do nfsmw e sem medição no aparelho.
+- 2026-10-20 03:11 T36 ✅ aceita (iter 9)
