@@ -105,7 +105,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [x] T26: 60fps F0.1 — protocolo A/B (3 corridas, mediana, p1, >50 ms)
   aceite: .venv/bin/python -m pytest -q tests/test_gameplay_fps.py && python3 tools/gameplay_fps.py --help 2>&1 | grep -q -- '--runs'
   detalhe: add --runs N (default 1) ao tools/gameplay_fps.py, mediana e p1/%>50ms; testes com logs sinteticos; playbook §8. Plano F0.1.
-- [ ] T27: 60fps F0.2 — log por swap (frontbuffer, formato, clear, resolve, RT key, fence)
+- [x] T27: 60fps F0.2 — log por swap (frontbuffer, formato, clear, resolve, RT key, fence)
   aceite: .venv/bin/python -m pytest -q tests/test_swap_log.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-swap.png -- --gh3_native_swap_log=true && grep -q 'swap:' out/parity/native-swap.capture/game.log
   detalhe: cvar gh3_native_swap_log; uma linha por swap; teste. Plano F0.2.
 - [ ] T29: 60fps F0.4 — auditoria de formato (VkFormat por alvo, 16F/gamma/clear)

@@ -228,3 +228,24 @@ ponto) e agrega por mediana. Regras para comparar builds:
 - Custo: ~2 min por corrida no Mac (30 s medidos); 3 corridas = ~6 min. Medido em 2026-10-20 (Mac, nativo,
   20 s, 1 corrida, máquina quente): game_fps 63,3, median frame 17 ms (58,8 fps), p1 29,4, p99 34 ms,
   >50 ms 0%, 1021 quadros amostrados.
+
+### F0.2 — log por swap (2026-10-20)
+
+`--gh3_native_swap_log=true` (cvar `gh3_native_swap_log`, padrão false) escreve uma linha
+`[native] swap: ...` por swap, formatada por `src/native/native_swap_log.h` (puro, testado sem SDK):
+
+```
+swap: frame=4992 fb=0CB68000 1280x720 fmt:37 src=1280x720 clear=-@00000000 depth=-@00000000
+      resolve=41 00000000 fmt:37 -> 0CB68000 rt=base:00000000 pitch:1280 fmt:0 samples:1
+      color alias:0 fence:10.437ms presented:1
+```
+
+- `fb` = endereço apresentado (fetch constant 0, já com swizzle), `fmt`/`src` = VkFormat e tamanho da
+  imagem resolvida de onde o present copia.
+- `clear`/`depth` = último clear pedido pelo guest no quadro (raw do `RB_COLOR_CLEAR`/`RB_DEPTH_CLEAR`
+  e endereço do alvo); `-` = o quadro não fez esse clear pelo caminho de resolve.
+- `resolve` = quantos resolves o quadro fez + origem (base do RT, VkFormat) e destino (`RB_COPY_DEST_BASE`)
+  do último; `rt` = chave do último passe (base/pitch/formato guest/amostras/tipo); `alias` = `alias_seq`
+  do T15 no alvo; `fence` = espera de fence acumulada no quadro (`frame_fence_wait_ns`).
+- Custo no Mac (corrida de ~5.000 swaps): 178 testes verdes; captura white=0,014 stddev=55,2. A linha é
+  `info` por swap, então ligue só na investigação (F0.3/F3.1), não no pacote do Switch.

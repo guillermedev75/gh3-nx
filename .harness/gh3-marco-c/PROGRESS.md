@@ -202,3 +202,10 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - verificado: aceite exit 0 (`pytest tests/test_gameplay_fps.py` 10, `--help` com `--runs`); suíte 172; corrida real 20 s no Mac: game_fps 63,3, frame mediano 17 ms, p1 29,4, p99 34 ms, >50 ms 0% (1021 quadros).
 - pendente: medir o A/B de 3 corridas no Switch (F5, com o aparelho).
 - 2026-10-20 00:05 T26 ✅ aceita (iter 1)
+
+### T27 — tentativa 1
+- feito: `src/native/native_swap_log.h` (formatter puro, testado sem SDK), `tests/test_swap_log.py` (7: campos, clear/resolve/alias/fence, vazio, fiação) e cvar `gh3_native_swap_log` (padrão false) no `Swap` de `native_renderer.cpp`; o quadro acumula clear de cor/profundidade (raw do registrador + alvo), contagem/origem/destino do último resolve, chave do último passe, `alias_seq` e `frame_fence_wait_ns`.
+- decisões: uma linha `[native] swap:` só com a cvar ligada (padrão false: custo de log por swap no Mac e no Switch) e reset do acumulador a cada swap; `clear=-` quando o quadro não limpou pelo caminho de resolve (fiel ao que aconteceu, não aos registradores parados).
+- verificado: aceite exit 0; 5.026 linhas `swap:` na captura (ex.: `frame=4992 ... resolve=41 ... fence:10.437ms presented:1`); suíte 179 passed; imagem white=0,014 stddev=55,2. Playbook §8/F0.2.
+- pendente: usar o log para fechar o verde (F0.3/F3.1); nenhum ganho de FPS nesta tarefa (só diagnóstico).
+- 2026-10-20 00:17 T27 ✅ aceita (iter 2)

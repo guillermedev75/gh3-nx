@@ -58,6 +58,7 @@ extern "C" {
 #endif
 
 #include "native_geometry_shaders.h"
+#include "native_swap_log.h"
 #include "native_edram_samples.h"
 #include "native_invisible.h"
 #include "native_scene_scale.h"
@@ -106,6 +107,9 @@ REXCVAR_DEFINE_BOOL(gh3_native_alias_cap, true, "GH3",
 REXCVAR_DEFINE_BOOL(gh3_native_async_pipelines, true, "GH3",
                     "Native renderer: compile new pipelines on a worker thread and skip the "
                     "draws that need them until they are ready, instead of stalling the frame");
+REXCVAR_DEFINE_BOOL(gh3_native_swap_log, false, "GH3",
+                    "Uma linha \"swap:\" por swap com frontbuffer, formato, clear, resolve, chave "
+                    "do render target, alias_seq e espera de fence (F0.2 do plano de 60 FPS)");
 
 namespace gh3::native {
 namespace shaders {
@@ -625,6 +629,20 @@ struct Renderer::Impl {
   VkDescriptorPool swap_pool = VK_NULL_HANDLE;
   VkDescriptorSet swap_sets[kSubmissionSlots][3] = {};
   uint32_t gamma_ramp[256] = {};
+  // F0.2: o que este quadro limpou e resolveu; zerado a cada swap.
+  struct SwapFrame {
+    bool has_clear_color = false;
+    uint64_t clear_color = 0;
+    uint32_t clear_color_target = 0;
+    bool has_clear_depth = false;
+    uint32_t clear_depth = 0;
+    uint32_t clear_depth_target = 0;
+    uint32_t resolve_count = 0;
+    uint32_t resolve_src = 0;
+    uint32_t resolve_src_format = 0;
+    uint32_t resolve_dst = 0;
+  };
+  SwapFrame swap_frame;
 
   SpirvShaderTranslator::SystemConstants system_constants = {};
 
@@ -4295,6 +4313,10 @@ void Renderer::Impl::Resolve() {
 
   // Copy.
   uint32_t dest_base = r[rex::graphics::XE_GPU_REG_RB_COPY_DEST_BASE];
+  ++swap_frame.resolve_count;
+  swap_frame.resolve_src = source->key.base_tiles << 12;
+  swap_frame.resolve_src_format = uint32_t(source->format);
+  swap_frame.resolve_dst = dest_base;
   auto dest_info = r.Get<reg::RB_COPY_DEST_INFO>();
   bool copy = dest_base != 0 &&
               (copy_control.copy_command == xenos::CopyCommand::kRaw ||
@@ -4569,6 +4591,9 @@ void Renderer::Impl::Resolve() {
                            ? VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT
                            : VkImageAspectFlags(VK_IMAGE_ASPECT_DEPTH_BIT);
         uint32_t clear = r[rex::graphics::XE_GPU_REG_RB_DEPTH_CLEAR];
+        swap_frame.has_clear_depth = true;
+        swap_frame.clear_depth = clear;
+        swap_frame.clear_depth_target = depth_target->key.base_tiles << 12;
         uint32_t depth24 = clear >> 8;
         a.clearValue.depthStencil.depth =
             xenos::DepthRenderTargetFormat(depth_target->key.format) ==
@@ -4593,6 +4618,9 @@ void Renderer::Impl::Resolve() {
         a.colorAttachment = 0;
         uint64_t value = r[rex::graphics::XE_GPU_REG_RB_COLOR_CLEAR] |
                          (uint64_t(r[rex::graphics::XE_GPU_REG_RB_COLOR_CLEAR_LO]) << 32);
+        swap_frame.has_clear_color = true;
+        swap_frame.clear_color = value;
+        swap_frame.clear_color_target = color_target->key.base_tiles << 12;
         using F = xenos::ColorRenderTargetFormat;
         switch (F(color_target->key.format)) {
           case F::k_8_8_8_8:
@@ -4816,6 +4844,42 @@ void Renderer::Impl::Swap(rex::ui::Presenter* presenter, uint32_t frontbuffer, u
         });
   }
   Submit();
+  if (REXCVAR_GET(gh3_native_swap_log)) {
+    swap_log::Entry entry;
+    entry.frame = frame;
+    entry.frontbuffer = address;
+    entry.width = width;
+    entry.height = height;
+    const ResolveDestination* dest = textures.FindResolveDestination(address);
+    entry.format = dest ? uint32_t(dest->format) : 0;
+    entry.source_width = dest ? dest->width : source_width;
+    entry.source_height = dest ? dest->height : source_height;
+    entry.has_clear_color = swap_frame.has_clear_color;
+    entry.clear_color = swap_frame.clear_color;
+    entry.clear_color_target = swap_frame.clear_color_target;
+    entry.has_clear_depth = swap_frame.has_clear_depth;
+    entry.clear_depth = swap_frame.clear_depth;
+    entry.clear_depth_target = swap_frame.clear_depth_target;
+    entry.resolve_count = swap_frame.resolve_count;
+    entry.has_resolve = swap_frame.resolve_count != 0;
+    entry.resolve_src = swap_frame.resolve_src;
+    entry.resolve_src_format = swap_frame.resolve_src_format;
+    entry.resolve_dst = swap_frame.resolve_dst;
+    const RenderTarget* target = pass.color[0] ? pass.color[0] : pass.depth;
+    if (target) {
+      entry.has_rt = true;
+      entry.rt_base = target->key.base_tiles << 12;
+      entry.rt_pitch = target->key.pitch;
+      entry.rt_format = target->key.format;
+      entry.rt_samples = 1u << std::min(target->key.msaa, 31u);
+      entry.rt_depth = target->key.is_depth != 0;
+      entry.alias_seq = target->alias_seq;
+    }
+    entry.fence_wait_ns = frame_fence_wait_ns;
+    entry.presented = presenter != nullptr && source_view != VK_NULL_HANDLE;
+    REXLOG_INFO("[native] {}", swap_log::Format(entry));
+  }
+  swap_frame = {};
   // Frame boundary.
   auto now = std::chrono::steady_clock::now();
   if (last_swap_time.time_since_epoch().count()) {
