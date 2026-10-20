@@ -664,3 +664,77 @@ travado por `tests/test_pgo.py`). O **T44** é o build de uso — nenhum código
   `NRO OK: 0x3df9000 bytes` (com asset section).
 - **FPS**: não medido aqui (só no aparelho). A tabela do §8 já registra PGO ~31 → ~25/~21 ms
   **sem ganho visível**; o valor é CPU do jogo, que ainda não é o limite no Switch.
+
+### F5 — NRO final e roteiro de medição no Switch (2026-10-20)
+
+O pacote da F5 é o build do **T46**, congelado para a medição:
+
+- Docker com **`-DGH3_PGO=`** (PGO desligado). O perfil de `out/pgo` foi gravado em 2026-10-18 e o lado
+  do app mudou desde então (196 avisos `coverage-mismatch`); além disso o PGO não deu ganho visível no
+  aparelho (§8). O build de uso (`-DGH3_PGO=usar`, T44) fica como A/B, não como pacote.
+- `switch/gh3.toml` com o modo desempenho (sem sombra/bloom), cena **0.65** + dinâmico + CAS,
+  `spirv-opt`, `shader simplify`, `msaa_as_samples=false`, `depth24`, present `IMMEDIATE` e
+  `gh3_switch_gpu_boost=true` (460,8 MHz no portátil, configuração oficial — não é OC).
+- Guardar o ELF do **mesmo** build (`build/switch/gh3` → `out/elf/gh3-<sha12 do NRO>.elf`): o NRO não
+  tem símbolos e um ELF de outro build dá nomes errados ao simbolizar o `rex_perfil.log`.
+- Pacote: `tools/make_sd_package.sh --nro build/switch/gh3.nro` → `out/sd/switch/gh3-nx/`
+  (`gh3-nx.nro`, `gh3.toml`, `LICENSES.txt`). O `game/` (disco do jogador) entra ao lado do NRO, no SD.
+  `tools/check_no_game_content.sh out/sd` tem que sair **limpo** antes de copiar.
+
+**Deploy (FTP do DBI, sem cabo):** copiar `out/sd/switch/gh3-nx/*` para
+`ftp://<ip-do-switch>:5000/switch/gh3-nx/`, mantendo o `game/` que já está lá.
+
+**Condições da medição (as 3 corridas iguais):**
+1. Portátil nas 3 corridas (não misturar com dock), clocks de fábrica + modo desempenho do APM,
+   overlay de FPS **fechado** (L+R+Cima), mesma música e mesma dificuldade.
+2. Abrir o jogo, esperar o menu, entrar na música e **deixar tocar ~40 s** (o primeiro bloco de 10 s
+   depois do carregamento não conta: ainda há pipelines/texturas subindo). Sair pelo HOME.
+3. Repetir 3×, reiniciando o jogo entre as corridas. Puxar `logs/gh3_NNN.log` e
+   `logs/rex/rex_perfil.log` de cada corrida para `out/switch-f5/<corrida>/`.
+
+**Números (por corrida, só os blocos de 10 s dentro da música):**
+
+| Critério | Onde ler | Meta |
+|---|---|---|
+| FPS | `[native] last 10 s: … N swaps` → `N/10`; mediana das 3 corridas | ≥58 |
+| Quadros >50 ms | `[native] slow frames: N over 50 ms` em cada bloco | 0 |
+| 99º percentil do frame time | PRESENTs com `log_level = "debug"` (só nessa corrida extra) e a conta abaixo | ≤20 ms |
+| GPU por quadro | `[native] per frame: renderer CPU X ms, GPU Y ms` | ≤11 ms GPU, ≤10 ms CPU |
+| Present | `present fence wait X ms/10 s` e `present ring: 3 output slots` | sem serialização |
+| Verde | observar 10 transições intro→menu→música→menu | nenhuma piscada |
+| Paridade | screenshot do Switch vs. build anterior (mesma música/trecho) | HUD, palco e brilho iguais |
+
+O `slow frames` por bloco já é o contador do próprio renderer para >50 ms; o **p99** exige os
+`XELOG_GPU PRESENT native` (só saem em `log_level = "debug"`). Nessa corrida extra, com o começo e o
+fim da janela da música (o debug atrasa a CPU; não usar o FPS dela):
+
+```bash
+python3 - out/switch-f5/debug/gh3_NNN.log "2026-10-20 21:30:10" "2026-10-20 21:31:10" <<'PY'
+import datetime, math, re, sys
+log, start, end = sys.argv[1], sys.argv[2], sys.argv[3]
+def t(s):
+    for f in ('%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S'):
+        try: return datetime.datetime.strptime(s, f).timestamp()
+        except ValueError: pass
+    raise SystemExit('timestamp invalido: ' + s)
+lo, hi = t(start), t(end)
+ts = []
+for l in open(log, errors='replace'):
+    if 'XELOG_GPU PRESENT native' in l:
+        m = re.match(r'\[(.*?)\]', l)
+        if m and lo <= t(m.group(1)) <= hi: ts.append(t(m.group(1)))
+d = sorted(b - a for a, b in zip(ts, ts[1:]))
+p99 = d[min(len(d) - 1, math.ceil(0.99 * len(d)) - 1)]
+print(f'{len(d)+1} quadros, mediana {1000*d[len(d)//2]:.1f} ms, '
+      f'p99 {1000*p99:.1f} ms, >50 ms {sum(x > 0.05 for x in d)}')
+PY
+```
+
+**Gate final:** mediana ≥58 FPS, zero quadros >50 ms nos blocos da música, p99 ≤20 ms, nenhuma piscada
+verde nas 10 transições, paridade visual com o build de referência, suíte `pytest -q tests` verde e
+`tools/check_no_game_content.sh out/sd` limpo. Registrar os três números (FPS mediano, p99, >50 ms) no
+`registro-de-impacto` com `Confiança: medido`.
+
+**Se falhar:** comparar `GPU by pass` e `per frame` do build antigo e do novo no mesmo trecho (o
+`--gh3_native_gpu_profile=true` liga o detalhe por passe), não a média de uma corrida isolada. O log por
+swap (`gh3_native_swap_log=true`) mostra clear/resolve/alias/fence de cada quadro.

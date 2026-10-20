@@ -318,3 +318,9 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - verificado: aceite exit 0 (`test_pgo.py` 4 passed + `.gcda` presente); suíte **292 passed**; build 408 s; `-fprofile-use` no `build.ninja`; `-fprofile-report` em `main.cpp`/`gh3_recomp.0.cpp` com `Profile consistency report` e 0 mismatch; `nm | grep gcov`=0; `_start`=0x0; `NRO OK: 0x3df9000`.
 - pendente: PGO em todos os TUs exige regravar no Switch (F5, humano); ganho de FPS/ms no aparelho (F5).
 - 2026-10-20 06:26 T44 ✅ aceita (iter 4)
+
+### T46 — tentativa 1
+- feito: build final do Switch no Docker com `-DGH3_PGO=` (313/313 ok): `gh3` 94.929.176 B, `gh3.nro` 64.568.390 B (`NRO OK: 0x3d88000`, asset section), `_start=0x0`, `build.ninja` sem `-fprofile-use` e sem o marcador do PGO instrumentado. ELF do mesmo build em `out/elf/gh3-de5b60185e6a.elf`; `tools/make_sd_package.sh` regerou `out/sd/switch/gh3-nx` (NRO com o mesmo sha do build) e `check_no_game_content.sh out/sd` saiu limpo. Roteiro de medição no Switch em `docs/porting-playbook.md` §8/F5 (deploy por FTP, 3 corridas, tabela de critérios, snippet de p99) + nota `docs/sessions/2026-10-20-marco-c-f5.md`.
+- decisões (e por quê): pacote sem PGO porque o perfil é de 2026-10-18, o app mudou (196 `coverage-mismatch`) e o PGO não deu ganho visível no aparelho; o build `usar` (T44) fica como A/B, não como entrega. As strings de `scene scale`/`spirv-opt`/`present ring` já estavam no binário e foram reconferidas no novo build. Não inventei teste para a medição: o gate é humano (aparelho), como manda o detalhe.
+- pendente: 3 corridas no Switch (mediana ≥58, zero >50 ms, p99 ≤20 ms, sem verde, paridade) e registro no `registro-de-impacto` com `Confiança: medido`.
+- 2026-10-20 06:38 T46 ✅ aceita (iter 5)

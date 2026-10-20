@@ -156,6 +156,6 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [!] T45: 60fps F4.4 — funcoes quentes em C++/NEON (condicional)
   aceite: .venv/bin/python -m pytest -q tests/test_hot_math.py
   detalhe: so depois da F5 se o guest for o limite de 60; sub_8272C7C0 tem 1862 linhas/28 fmadds; comecar por funcoes menores; sem verificacao possivel, manter [!] (nao inventar aceite). Plano F4.4.
-- [ ] T46: 60fps F5 — NRO/pacote final + roteiro de medicao no Switch
+- [x] T46: 60fps F5 — NRO/pacote final + roteiro de medicao no Switch
   aceite: python3 tools/check_nro.py build/switch/gh3.nro && strings build/switch/gh3 | grep -q 'scene scale' && strings build/switch/gh3 | grep -q 'spirv-opt' && strings build/switch/gh3 | grep -q 'present ring' && test -f out/sd/switch/gh3-nx/gh3-nx.nro && tools/check_no_game_content.sh out/sd
   detalhe: build Docker com -DGH3_PGO=, ELF em out/elf/, tools/make_sd_package.sh; a medicao de 60 FPS e o gate humano (3 corridas, mediana >=58, zero >50 ms, 99o <=20 ms, sem verde, paridade). Plano F5.
