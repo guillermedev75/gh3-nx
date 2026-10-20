@@ -268,3 +268,23 @@ format: frame=1234 color base:A0000000 pitch:1280 1280x720 samples:1 guest:6
   profundidade 1.0), `scene`/`alias` o scene scale (T16) e o alias de amostras (T15).
 - Captura nativa (10 alvos): cor `R8G8B8A8_UNORM`, profundidade `D32_SFLOAT_S8_UINT` (com
   `gh3_native_depth24` aparece `D24_UNORM_S8_UINT`/`D32_SFLOAT`); nenhum alvo 16F no caminho atual.
+
+### F1.1b — controlador dinâmico da escala da cena (2026-10-20)
+
+`--gh3_native_scene_dynamic=true` (cvar `gh3_native_scene_dynamic`, padrão false no código e true no
+`switch/gh3.toml`) usa o intervalo entre swaps como orçamento de quadro e move a escala do T16 entre 0.65
+e 1.0 em passos de 0.05 (`src/native/native_scene_dynamic.h`, puro, testado sem SDK):
+
+- Alvo 16.7 ms com margens: acima de 17.7 ms conta para descer, abaixo de 15.2 ms para subir; entre os
+  dois é neutro e zera a histerese. Precisa de **3 quadros seguidos** no mesmo lado e **0.6 s no mesmo
+  nível** (contados com o tempo real dos swaps) antes de mudar.
+- O `gh3_native_scene_scale` vira só o ponto de partida; ele também cai na grade de 0.05.
+- Ao mudar a escala, cada alvo `scene_scaled` é recriado no tamanho novo na próxima vez que o jogo o
+  pede (`scale_used` no `RenderTarget`); o conteúdo antigo sobe/desce por `vkCmdBlitImage` LINEAR
+  (NEAREST na profundidade) e o `SyncSceneTarget` sobrepõe o que o alvo cheio tiver de mais novo.
+- Log: uma linha `[native] scene dynamic: enabled 0.65-1.00, target 16.7 ms, ...` ao iniciar e uma
+  `[native] scene dynamic: 0.95 -> 0.9 (frame N, 24.5 ms)` por mudança.
+- Corrida de verificação no Mac (captura nativa, partindo de 1.0): desceu 1.0 → 0.65 em ~65 s de
+  script, cada passo com o tamanho novo (ex. `scene scale 0.65: 832x468`); captura a 0.65
+  white=0,001 stddev=53,1. A recriação dos alvos custa um quadro longo (~300 ms no pior caso), então
+  no Switch o controlador deve começar no piso (0.65) e só subir se sobrar orçamento.

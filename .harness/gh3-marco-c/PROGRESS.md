@@ -216,3 +216,11 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - verificado: aceite exit 0 (8 testes, captura nativa, 10 linhas `format:` com `VK_FORMAT_`); suíte 187 passed. Alvos vistos: cor `R8G8B8A8_UNORM`, profundidade `D32_SFLOAT_S8_UINT`; nenhum 16F no caminho atual.
 - pendente: nada; F1.4 (T33) usa este log para decidir os cortes.
 - 2026-10-20 00:26 T29 ✅ aceita (iter 3)
+
+### T31 — tentativa 1
+- feito: `src/native/native_scene_dynamic.h` (níveis 0.65-1.0 em passos de 0.05, alvo 16.7 ms, margens 1.0/1.5 ms, histerese 3 quadros e 0.6 s no nível) + 9 testes em `tests/test_scene_dynamic.py`; cvar `gh3_native_scene_dynamic` (false no código, true no `switch/gh3.toml`); o `Swap` mede o intervalo entre swaps e loga `scene dynamic:` ao ligar e a cada mudança; `RenderTarget.scale_used` força recriar o alvo `scene_scaled` quando a escala muda (inclusive menor) e o conteúdo antigo é esticado por `vkCmdBlitImage` (LINEAR; NEAREST na profundidade).
+- decisões: começar da escala do cvar (grade de 0.05) e usar o tempo real entre swaps (é o que o jogador sente, já inclui vsync/GPU); tempos inválidos (>1 s) não contam para a histerese para não reagir a carregamento.
+- verificado: aceite exit 0 (9 testes; captura 0.65 white=0,001 stddev=53,1; log com `scene dynamic:`); suíte **196 passed**; corrida extra partindo de 1.0 desceu 1.0→0.65 em passos com log por mudança.
+- pendente: medir no Switch (F5): a recriação dos alvos custa um quadro longo (~300 ms no pior caso no Mac), então o piso 0.65 deve ser o ponto de partida.
+- 2026-10-20 01:45 T31 ✅ aceita (iter 1)
+- 2026-10-20 01:47 T31 ✅ aceita (iter 4)

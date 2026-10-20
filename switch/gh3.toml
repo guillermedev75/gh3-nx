@@ -37,10 +37,12 @@ gh3_vblank_late_no_wait = false
 # excessivo do T9 era o bloom). false volta os dois efeitos.
 gh3_native_skip_shadows = true
 gh3_native_skip_bloom = true
-# Cena 3D a 75% da resolução da HUD (960x540 com a HUD em 1280x720): o passe principal com profundidade
-# é o maior custo de GPU no Switch (src/native/native_scene_scale.h). 1.0 desliga. Piso 0.65 até o
-# controlador dinâmico 0.65-1.0 entrar (plano 2026-10-19-gh3-nx-60fps).
+# Cena 3D abaixo da resolução da HUD (o passe principal com profundidade é o maior custo de GPU no
+# Switch; src/native/native_scene_scale.h). 1.0 desliga.
 gh3_native_scene_scale = 0.65
+# Controlador dinâmico 0.65-1.0 em passos de 0.05 para caber em 16.7 ms (histerese de 3 quadros e 0.6 s
+# no mesmo nível; src/native/native_scene_dynamic.h). A escala acima é só o ponto de partida.
+gh3_native_scene_dynamic = true
 # Loga a contagem de cedências a cada 4096. Diagnóstico.
 gh3_guest_waits_stats = false
 

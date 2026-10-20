@@ -63,6 +63,7 @@ extern "C" {
 #include "native_edram_samples.h"
 #include "native_invisible.h"
 #include "native_scene_scale.h"
+#include "native_scene_dynamic.h"
 #include "native_primitive_expand.h"
 #include "native_hash.h"
 #include "native_textures.h"
@@ -92,6 +93,10 @@ REXCVAR_DEFINE_DOUBLE(gh3_native_scene_scale, 1.0, "GH3",
                       "Escala (0.25-1) da cena 3D em relação à HUD: o alvo 1280x720 usado com profundidade é "
                       "desenhado numa imagem de scale*1280 x scale*720 e sobe por blit linear quando a HUD "
                       "(sem profundidade) ou um resolve o usa. 1.0 = desligado (T16)");
+REXCVAR_DEFINE_BOOL(gh3_native_scene_dynamic, false, "GH3",
+                    "Controlador dinamico da escala da cena (T31): mede o intervalo entre swaps e sobe/desce "
+                    "a escala do gh3_native_scene_scale em passos de 0.05 entre 0.65 e 1.0 para caber em "
+                    "16.7 ms, com histerese de 3 quadros e 0.6 s no mesmo nivel. false = escala fixa");
 REXCVAR_DEFINE_BOOL(gh3_native_skip_shadows, false, "GH3",
                     "Experimento de FPS: pula os draws do mapa de sombra (alvo cor base 0, pitch 160); "
                     "a sombra fica com o conteudo do frame anterior");
@@ -302,6 +307,9 @@ struct RenderTarget {
   uint64_t scene_touch = 0;
   uint64_t scene_seen = 0;
   uint64_t checked_clock = ~uint64_t(0);
+  // T31: escala com que a imagem escalada foi criada (só em key.scene_scaled). O controlador dinâmico
+  // muda a escala; um alvo de outro tamanho precisa ser recriado, inclusive menor.
+  float scale_used = 0.0f;
 };
 
 // The attachments of a rendering scope: color 0-3 and depth.
@@ -441,6 +449,8 @@ struct Renderer::Impl {
   float scene_scale = 1.0f;
   bool scene_logged = false;
   uint64_t scene_clock = 0;
+  // T31: controlador dinâmico (gh3_native_scene_dynamic); ausente = escala fixa.
+  std::unique_ptr<scene::DynamicScale> scene_dynamic;
   // gh3_native_alias_cap (ver o cvar).
   bool alias_cap = true;
   // gh3_native_zcull (ver o cvar).
@@ -1473,6 +1483,16 @@ bool Renderer::Impl::Initialize() {
   multisample = REXCVAR_GET(gh3_native_msaa);
   msaa_as_samples = REXCVAR_GET(gh3_native_msaa_as_samples);
   scene_scale = scene::ClampScale(float(REXCVAR_GET(gh3_native_scene_scale)));
+  if (REXCVAR_GET(gh3_native_scene_dynamic)) {
+    // T31: o piso do controlador é 0.65; a escala pedida só define por onde ele começa.
+    scene_dynamic = std::make_unique<scene::DynamicScale>(scene::DynamicConfig(), scene_scale);
+    scene_scale = float(scene_dynamic->scale());
+    const scene::DynamicConfig& c = scene_dynamic->config();
+    REXLOG_INFO("[native] scene dynamic: enabled {:.2f}-{:.2f}, target {:.1f} ms, step {:.2f}, "
+                "hold {:.2f} s, start {:g}",
+                double(c.min_level) / 20.0, double(c.max_level) / 20.0, c.target_ms,
+                double(c.step_levels) / 20.0, c.hold_s, scene_scale);
+  }
   alias_cap = REXCVAR_GET(gh3_native_alias_cap);
   zcull = REXCVAR_GET(gh3_native_zcull);
   ubo_alignment = std::max<VkDeviceSize>(properties.minUniformBufferOffsetAlignment, 16);
@@ -2680,12 +2700,17 @@ RenderTarget* Renderer::Impl::CreateOrGetRenderTarget(const RenderTargetKey& key
   }
   // T16: a imagem escalada da cena; min_height continua em pixels do jogo.
   const bool scaled = key.scene_scaled && scene::Enabled(scene_scale);
+  const float scale_now = scaled ? scene_scale : 0.0f;
   auto it = render_targets.find(key);
   RenderTarget* old = nullptr;
   if (it != render_targets.end()) {
     old = it->second.get();
     old->last_used_frame = frame;
-    if (old->height >= (scaled ? scene::ScaledSize(scene_scale, rex::align(min_height, 16u))
+    // T31: o controlador dinâmico muda a escala; um alvo criado com outra escala é recriado, mesmo que
+    // o tamanho novo seja menor (senão descer a resolução não economizaria nada).
+    const bool same_scale = !scaled || std::abs(old->scale_used - scale_now) < 1e-4f;
+    if (same_scale &&
+        old->height >= (scaled ? scene::ScaledSize(scene_scale, rex::align(min_height, 16u))
                                : min_height)) {
       return old;
     }
@@ -2698,6 +2723,7 @@ RenderTarget* Renderer::Impl::CreateOrGetRenderTarget(const RenderTargetKey& key
     rt->width = scene::ScaledSize(scene_scale, rt->width);
     rt->height = scene::ScaledSize(scene_scale, rt->height);
   }
+  rt->scale_used = scale_now;
   rt->samples = VkSampleCountFlagBits(1u << key.msaa);
   rt->format = key.is_depth ? DepthFormatFor(key.format)
                             : ColorFormatToVk(xenos::ColorRenderTargetFormat(key.format));
@@ -2778,10 +2804,6 @@ RenderTarget* Renderer::Impl::CreateOrGetRenderTarget(const RenderTargetKey& key
                                &view.subresourceRange);
   }
   if (old) {
-    VkImageCopy copy = {};
-    copy.srcSubresource = {aspect, 0, 0, 1};
-    copy.dstSubresource = copy.srcSubresource;
-    copy.extent = {std::min(old->width, rt->width), old->height, 1};
     VkMemoryBarrier memory_barrier = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
                                       VK_ACCESS_TRANSFER_WRITE_BIT |
                                           VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
@@ -2790,8 +2812,25 @@ RenderTarget* Renderer::Impl::CreateOrGetRenderTarget(const RenderTargetKey& key
     dfn().vkCmdPipelineBarrier(c, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                                VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &memory_barrier, 0, nullptr,
                                0, nullptr);
-    dfn().vkCmdCopyImage(c, old->image, VK_IMAGE_LAYOUT_GENERAL, rt->image,
-                         VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+    if (scaled && old->scale_used > 0.0f && std::abs(old->scale_used - scale_now) >= 1e-4f) {
+      // T31: o conteúdo da imagem escalada é o mesmo, em outro tamanho: um blit estica em vez de
+      // copiar 1:1 (o SyncSceneTarget ainda sobrepõe o que o alvo cheio tiver de mais novo).
+      VkImageBlit blit = {};
+      blit.srcSubresource = {aspect, 0, 0, 1};
+      blit.dstSubresource = blit.srcSubresource;
+      blit.srcOffsets[1] = {int32_t(old->width), int32_t(old->height), 1};
+      blit.dstOffsets[1] = {int32_t(rt->width), int32_t(rt->height), 1};
+      vkCmdBlitImage(c, old->image, VK_IMAGE_LAYOUT_GENERAL, rt->image,
+                     VK_IMAGE_LAYOUT_GENERAL, 1, &blit,
+                     key.is_depth ? VK_FILTER_NEAREST : VK_FILTER_LINEAR);
+    } else {
+      VkImageCopy copy = {};
+      copy.srcSubresource = {aspect, 0, 0, 1};
+      copy.dstSubresource = copy.srcSubresource;
+      copy.extent = {std::min(old->width, rt->width), old->height, 1};
+      dfn().vkCmdCopyImage(c, old->image, VK_IMAGE_LAYOUT_GENERAL, rt->image,
+                           VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+    }
     // Destroyed once this frame is done on the GPU (waiting for idle here
     // was a visible hitch).
     retired_render_targets.push_back({frame, old->image, old->view, old->sample_view, old->memory});
@@ -4922,7 +4961,9 @@ void Renderer::Impl::Swap(rex::ui::Presenter* presenter, uint32_t frontbuffer, u
   swap_frame = {};
   // Frame boundary.
   auto now = std::chrono::steady_clock::now();
+  double frame_ms = 0.0;
   if (last_swap_time.time_since_epoch().count()) {
+    frame_ms = std::chrono::duration<double, std::milli>(now - last_swap_time).count();
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_swap_time).count();
     if (ms > 50) {
       RendererStats& st = stats();
@@ -4933,6 +4974,18 @@ void Renderer::Impl::Swap(rex::ui::Presenter* presenter, uint32_t frontbuffer, u
       st.slow_frame_uploads += textures.stats().uploads - at_last_swap.textures_uploaded;
       st.slow_frame_render_targets +=
           st.render_targets_created - at_last_swap.render_targets_created;
+    }
+    // T31: o intervalo entre swaps é o que o jogador sente; o controlador só muda a escala no fim do
+    // quadro para os alvos escalados do próximo já nascerem no tamanho novo.
+    if (scene_dynamic) {
+      const float before = scene_scale;
+      const double next = scene_dynamic->Update(frame_ms);
+      if (float(next) != before) {
+        scene_scale = float(next);
+        scene_logged = false;
+        REXLOG_INFO("[native] scene dynamic: {:g} -> {:g} (frame {}, {:.1f} ms)", before, next,
+                    frame, frame_ms);
+      }
     }
   }
   last_swap_time = now;
