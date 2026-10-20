@@ -303,3 +303,11 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - decisões (e por quê): cache só para IM_LOAD_IMMEDIATE — no caminho por endereço o `shaders_by_location` (cabeçalho + XXH3 1×/quadro) já é mais barato e repetir o memcmp do microcódigo em todo draw era o que o comentário do `LoadShader` diz ter sido lento; a cache guarda `void*` (o `VulkanShader`, nunca destruído antes do shutdown) e é exata, então não arrisca paridade. Query: reset antes de cada bloco fora do render pass e sempre esperando o fence do slot no `BeginRecording`, para nunca limpar query em uso.
 - pendente: ganho de FPS/CPU no Switch (F5, a GPU é o limite); NRO não rebuildado (T46).
 - 2026-10-20 05:37 T42 ✅ aceita (iter 2)
+
+### T43 — tentativa 1
+- feito: `switch/orden_funciones.ld` (bloco `.text : { KEEP (*(.crt0)) … }` com as quentes) + `tools/calientes.py` (gera a lista do `rex_perfil.log` + `nm` do mesmo build) + `cmake/switch.cmake`: `GH3_ORDEN_FUNCIONES` (ON) liga `-Wl,--section-ordering-file` com `LINK_DEPENDS`, e `GH3_RECOMP_O2` (OFF) põe `-O2` no `gh3_recomp`; `tests/test_function_order.py` (10) e playbook §8/F4.2.
+- decisões (e por quê): mecanismo é do linker, não do codegen (o SDK não tem opção de ordem); `KEEP (*(.crt0))` primeiro é invariante (sem ele `_start` sai do 0 e o NRO não inicia); `memcpy/memmove/memset` do libc entram pelo arquivo (`*libc.a:libc_a-memcpy.o(...)`) porque é assembly sem seção por função; a lista fica curta (perfil↔ELF do mesmo build não existe hoje) e o `calientes.py` regenera no F5.
+- **não** liguei `non_volatile_as_local`: `tests/test_codegen_flags.py` trava o flag em `false` (assert que não se altera) e o T11 mostrou crash (`write of guest 0x00000084`); conserto real = `share_registers` por função, dois passes de codegen (fora do F4.2).
+- verificado: aceite exit 0 (`test_function_order.py` 10 passed; captura nativa white=0,003 stddev=46,1 mean=84,6); suíte **292 passed**; Docker relink do NRO: `_start`=0x0, `sub_824D0070` 0x695f90→0x130, `sub_8272C7C0` 0x1a89600→0x410, `svcSleepThread`→0x3b64, `memcpy/memmove` 0x2d21880→0x3c80; `GH3_RECOMP_O2=ON` confere `-O2` no `build.ninja`.
+- pendente: A/B real de −O2 só no aparelho (F5); lista completa de quentes exige guardar o ELF do build do perfil (F5); NRO não rebuildado para entrega (T46).
+- 2026-10-20 06:12 T43 ✅ aceita (iter 3)

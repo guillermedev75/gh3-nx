@@ -41,6 +41,13 @@ target_compile_options(gh3_recomp PRIVATE -fno-tree-slp-vectorize -fno-tree-vect
 if(NOT GH3_PGO STREQUAL "gerar")
     target_compile_options(gh3_recomp PRIVATE -flto=6 -fno-fat-lto-objects)
 endif()
+# F4.2 (T43): A/B do nível de otimização do código traduzido. O -O3 do Release engorda o código
+# e o A57 tem 48 KB de I-cache: -O2 costuma dar código menor. Com LTO o GCC grava o nível de
+# cada função na compilação, então a opção vai no gh3_recomp (mesmo A/B do NFSMW_RECOMP_O2).
+option(GH3_RECOMP_O2 "A/B: compilar o código traduzido com -O2 em vez do -O3 do Release" OFF)
+if(GH3_RECOMP_O2 AND TARGET gh3_recomp)
+    target_compile_options(gh3_recomp PRIVATE -O2)
+endif()
 
 # No Switch o plugin xenos já entra inteiro no executável (rexglue_switch_configure_target, com
 # --whole-archive), então o renderer nativo e a GPU emulada linkam direto nele; não existe a
@@ -67,6 +74,16 @@ target_link_libraries(gh3 PRIVATE gh3_recomp)
 target_link_libraries(gh3 PRIVATE SPIRV-Tools-opt SPIRV-Tools-link SPIRV-Tools)
 if(NOT GH3_PGO STREQUAL "gerar")
     target_link_options(gh3 PRIVATE -flto=6 -flto-partition=balanced)
+endif()
+# F4.2 (T43): funções quentes no começo do .text. `--section-ordering-file` lê o script (formato
+# do nfsmw-nx) e reordena as seções de entrada de cada função; o LINK_DEPENDS força o relink
+# quando a lista muda. O `KEEP (*(.crt0))` do script mantém o `_start` no endereço 0.
+option(GH3_ORDEN_FUNCIONES "Agrupar as funções quentes no começo do .text (F4.2)" ON)
+if(GH3_ORDEN_FUNCIONES)
+    target_link_options(gh3 PRIVATE
+        "-Wl,--section-ordering-file,${CMAKE_SOURCE_DIR}/switch/orden_funciones.ld")
+    set_property(TARGET gh3 APPEND PROPERTY LINK_DEPENDS
+        "${CMAKE_SOURCE_DIR}/switch/orden_funciones.ld")
 endif()
 # PGO (retirado do nfsmw-nx, app/CMakeLists.txt e src/nfsmw_pgo.cpp): o build de gravação usa
 # -fprofile-generate e o app desvia os .gcda para sdmc:/switch/gh3-nx/pgo; o de uso relê esses

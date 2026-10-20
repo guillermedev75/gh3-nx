@@ -599,3 +599,40 @@ ficou em **`src/native/native_ring_caches.h`** (compila sem SDK/GPU; `tests/test
   7 faltas, 0 evictions; **10 samplers criados** a sessão toda; com o perfil de GPU ligado, **~30-50
   queries limpas por quadro perfilado em vez de 512**. A imagem não mudou (white=0,002, stddev 41,5).
   O ganho de FPS no Switch depende da GPU (F5), mas é CPU do anel que deixa de ser gasta.
+
+### F4.2 — ordenação de funções no .text e A/B de −O2 (2026-10-20)
+
+O A57 tem 48 KB de I-cache e uma TLB pequena, e o NRO tem ~53 MB de código: com as funções mais
+chamadas espalhadas pela imagem, cada salto distante paga um passeio na tabela de páginas. O
+nfsmw-nx resolve com `--section-ordering-file` (`app/orden_funciones.ld`, ver `docs/toolchain.md`
+§Function ordering); aqui o mesmo mecanismo, em `switch/orden_funciones.ld`, ligado por
+`GH3_ORDEN_FUNCIONES` em `cmake/switch.cmake`.
+
+- **Formato**: o arquivo é um fragmento de linker script com um bloco `.text : { … }`, não uma
+  lista solta de curingas. Lista plana (ou `KEEP(...)` sem o `.text : {`) dá `syntax error in
+  section-ordering-file` no binutils 2.45.1 (devkitA64). Confirmado com um teste mínimo no Docker.
+- **`KEEP (*(.crt0))` primeiro** é obrigatório: o `_start` do libnx mora no crt0 e tem que
+  continuar no endereço 0, senão o NRO não inicia. Sem isso, na bancada, `_start` pulou para
+  0x401a8 e o `memcpy` foi para o endereço 0.
+- **Funciona com LTO**: o `-flto` junta tudo num `.text` só, mas as seções de **entrada** por
+  função continuam existindo (`-ffunction-sections -fdata-sections`, `cmake/switch-rexglue-gcc.cmake`),
+  e é nelas que o linker reordena. Os nomes têm que casar com os símbolos reais (`*(.text.sub_824D0070)`,
+  não o nome mangled de C++).
+- **`tools/calientes.py`** regenera a lista a partir de um `rex_perfil.log` (perfil de pilha) e da
+  saída de `nm`/ELF **do mesmo build** (um ELF de outro build dá nomes errados, §8). Uso:
+  `python3 tools/calientes.py <rex_perfil.log> <ELF|nm.txt> switch/orden_funciones.ld`.
+- **A/B de −O2** (`GH3_RECOMP_O2`, padrão OFF): o `-O3` do Release engorda o código e o I-cache é
+  curto; a opção entra no `gh3_recomp` (com LTO o nível de cada função é gravado na compilação).
+  Mesmo A/B do `NFSMW_RECOMP_O2` do nfsmw-nx. Conferido no `build.ninja`: com ON, a linha de flags
+  termina em `… -flto=6 -fno-fat-lto-objects -O2` (o último vence).
+- **`non_volatile_as_local` continua bloqueado**: `tests/test_codegen_flags.py` trava o flag em
+  `false` (assert que não se altera) e **T11** mostrou que ligá-lo derruba o jogo (`write of guest
+  0x00000084`) porque funções divididas leem registrador antes de escrever. O conserto seria
+  `share_registers=true` por função (via um `lee_antes.py` portado, dois passes de codegen); fica
+  fora do F4.2.
+- **Verificado no Docker** (relink incremental, só o passo de link): `nm build/switch/gh3` dá
+  `_start = 0x0`; `sub_824D0070` 0x695f90 → **0x130**, `sub_8272C7C0` 0x1a89600 → **0x410**,
+  `svcSleepThread` → **0x3b64**, `memcpy/memmove` 0x2d21880 → **0x3c80** (o `memcpy` do libc é
+  assembly sem seção por função: entra pelo arquivo, `*libc.a:libc_a-memcpy.o(.text .text.*)`, como
+  no nfsmw). Testes: `tests/test_function_order.py` (sem GPU). No Mac a captura não muda (a
+  ordenação só afeta o link do NRO); a captura de aceite deu white=0,003, stddev 46,1.

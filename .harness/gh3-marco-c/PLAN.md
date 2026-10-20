@@ -147,7 +147,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [x] T42: 60fps F4.1 — caches do ring (IM_LOAD, sampler, query, zero log)
   aceite: .venv/bin/python -m pytest -q tests/test_ring_caches.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-caches.png && python3 tools/image_stats.py out/parity/native-caches.png --max-white 0.15 --min-stddev 20
   detalhe: per-draw caches do nfsmw; zero log no ring. Plano F4.1.
-- [ ] T43: 60fps F4.2 — function ordering + non_volatile_as_local + A/B -O2
+- [x] T43: 60fps F4.2 — function ordering + non_volatile_as_local + A/B -O2
   aceite: .venv/bin/python -m pytest -q tests/test_function_order.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-order.png && python3 tools/image_stats.py out/parity/native-order.png --max-white 0.15 --min-stddev 20
   detalhe: _start=0; boot; A/B. Plano F4.2.
 - [ ] T44: 60fps F4.3 — PGO representativo (build com o perfil existente)
