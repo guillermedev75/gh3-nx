@@ -106,7 +106,20 @@ if(GH3_NATIVE_RENDERER)
         "${GH3_SDK_SRC}/src/ui/shaders/vulkan_spirv"
         "${GH3_SDK_SRC}/thirdparty/glslang")
     target_compile_definitions(gh3 PRIVATE GH3_NATIVE_RENDERER=1)
-    target_link_libraries(gh3 PRIVATE gh3_gpu_xenos rex::xxhash
+    # F2.2 (T35): spvtools::Optimizer nos shaders traduzidos. As libs vêm do T34 (F2.1,
+    # tools/build_spirv_tools.sh), instaladas junto do SDK do host.
+    get_filename_component(GH3_SDK_INSTALL "${rexglue_DIR}/../../.." ABSOLUTE)
+    set(GH3_SPIRV_TOOLS_OPT_LIBS
+        "${GH3_SDK_INSTALL}/lib/libSPIRV-Tools-opt.a"
+        "${GH3_SDK_INSTALL}/lib/libSPIRV-Tools-link.a"
+        "${GH3_SDK_INSTALL}/lib/libSPIRV-Tools.a")
+    foreach(_lib IN LISTS GH3_SPIRV_TOOLS_OPT_LIBS)
+        if(NOT EXISTS "${_lib}")
+            message(FATAL_ERROR "Falta ${_lib}: rode tools/build_spirv_tools.sh (F2.1/T34)")
+        endif()
+    endforeach()
+    target_include_directories(gh3 PRIVATE "${GH3_SDK_INSTALL}/include")
+    target_link_libraries(gh3 PRIVATE gh3_gpu_xenos rex::xxhash ${GH3_SPIRV_TOOLS_OPT_LIBS}
         rex::SPIRV rex::glslang rex::MachineIndependent rex::GenericCodeGen rex::OSDependent rex::OGLCompiler)
 endif()
 

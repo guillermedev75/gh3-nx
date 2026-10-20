@@ -370,3 +370,28 @@ mora em `SPIRV-Tools-opt`, que depende de `SPIRV-Tools` + `SPIRV-Tools-link`.
   - O build do SDK agora compila ~330 TUs a mais (spirv-tools + lint/diff/reduce, que o CMake do projeto
     não deixa desligar) tanto no Mac quanto em cada build do NRO.
 - Consumo das libs (`gh3_native_spirv_opt`) é o T35/F2.2.
+
+### F2.2 — spirv-opt nos shaders traduzidos (2026-10-20)
+
+O tradutor do SDK gera SPIR-V verboso e o caminho emulado até desliga o otimizador. No renderer nativo,
+`src/native/native_spirv_opt.h` roda `spvtools::Optimizer` (RegisterPerformancePasses) em cada módulo
+traduzido antes de `vkCreateShaderModule`, com `gh3_native_spirv_opt` (padrão false; true no
+`switch/gh3.toml`).
+
+- **Um módulo por tradução**, criado no thread da tradução (ou no thread do ring, sem pipelines async) e
+  guardado em `optimized_shader_modules`. Nunca por quadro; o otimizador custa dezenas de ms.
+- **Propriedade**: o módulo otimizado é nosso e é destruído no `Shutdown`; o original continua sendo do
+  `VulkanTranslation` (destruído em `shaders.clear()`). Em fallback não guardamos o módulo do SDK no mapa,
+  senão seria destruído duas vezes.
+- **Validador com scalar block layout**: o `XeSystemConstants` do tradutor põe um array de `vec4` em
+  offset 28, fora do layout padrão. O SDK liga `VK_EXT_scalar_block_layout` no dispositivo
+  (`vulkan_device.cpp`, `features_1_2.scalarBlockLayout`), então `SetScalarBlockLayout(true)` no
+  `ValidatorOptions`. Sem isso **todo** shader cai em fallback (`invalid input`).
+- **Fallback** ao original em: módulo pequeno demais, entrada inválida, `Optimizer::Run` falso/saída vazia
+  ou saída inválida. O primeiro fallback de cada motivo loga `spirv-opt: using the original shader (...)`.
+- **Log** a cada 10 s (`gh3_native_system.cpp`, `Report`): `[native] spirv-opt: N shaders, X% fewer
+  instructions (M fallbacks)`, cumulativo (a linha continua saindo mesmo quando o intervalo não traduziu
+  shader nenhum).
+- **Medido no Mac** (captura do T35, 720p): 75 shaders no primeiro relatório com 28,4% menos instruções e
+  0 fallbacks; captura white=0,012 stddev=53,2. O ganho é de GPU (o NAK compila menos), então a medição
+  de FPS que vale é a da F5 no Switch.

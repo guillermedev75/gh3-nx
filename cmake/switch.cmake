@@ -62,6 +62,9 @@ target_include_directories(gh3 PRIVATE
     "${REXSDK_DIR}/thirdparty/glslang")
 target_compile_definitions(gh3 PRIVATE GH3_NATIVE_RENDERER=1)
 target_link_libraries(gh3 PRIVATE gh3_recomp)
+# F2.2 (T35): spirv-opt nos shaders traduzidos. O SDK é subdiretório aqui, então os alvos do
+# T34 (F2.1) propagam os includes de spirv-tools.
+target_link_libraries(gh3 PRIVATE SPIRV-Tools-opt SPIRV-Tools-link SPIRV-Tools)
 if(NOT GH3_PGO STREQUAL "gerar")
     target_link_options(gh3 PRIVATE -flto=6 -flto-partition=balanced)
 endif()

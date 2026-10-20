@@ -123,7 +123,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [x] T34: 60fps F2.1 — construir SPIRV-Tools/opt no Mac e no devkitA64
   aceite: .venv/bin/python -m pytest -q tests/test_spirv_tools.py && test -f out/sdk-install/lib/libSPIRV-Tools-opt.a
   detalhe: patch local no SDK (add_subdirectory spirv-tools, opt on) aplicado pelo setup_sdk.sh; build/install nos dois toolchains. Se o devkitA64 nao compilar, documentar e bloquear (nao inventar). Plano F2.1.
-- [ ] T35: 60fps F2.2 — spirv-opt nos shaders traduzidos (validar/fallback/log)
+- [x] T35: 60fps F2.2 — spirv-opt nos shaders traduzidos (validar/fallback/log)
   aceite: .venv/bin/python -m pytest -q tests/test_spirv_opt.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-opt.png -- --gh3_native_spirv_opt=true && python3 tools/image_stats.py out/parity/native-opt.png --max-white 0.15 --min-stddev 20 && grep -qE 'spirv-opt: [0-9]+ shaders, [0-9.]+% fewer' out/parity/native-opt.capture/game.log
   detalhe: spvtools::Optimizer (validar; fallback ao original; contar instrucoes). Cvar padrao false, true no Switch. Plano F2.2.
 - [ ] T36: 60fps F2.3 — NAK/draw path do nfsmw (latencia 200, peephole 8)

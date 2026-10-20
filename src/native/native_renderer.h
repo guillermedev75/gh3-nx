@@ -131,6 +131,8 @@ class Renderer {
   void Flush();
   // The textures uploaded most since the last call (TextureCache).
   std::string TakeTextureUploadReport();
+  // F2.2: resumo cumulativo do spirv-opt (vazio se nenhum shader passou por ele ainda).
+  std::string TakeSpirvOptReport();
 
   // Called for every register the command ring writes, so constant uploads
   // can be reused while their registers stay unchanged.

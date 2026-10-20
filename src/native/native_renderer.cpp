@@ -66,6 +66,7 @@ extern "C" {
 #include "native_scene_scale.h"
 #include "native_scene_dynamic.h"
 #include "native_scene_cas.h"
+#include "native_spirv_opt.h"
 
 // T32: o SPIR-V que o próprio SDK usa no presenter para CAS (FidelityFX), reaproveitado no blit que
 // sobe a cena escalada. O VS desenha o retângulo em NDC e o PS lê 9 texels e aplica o CAS.
@@ -135,6 +136,10 @@ REXCVAR_DEFINE_BOOL(gh3_native_swap_log, false, "GH3",
 REXCVAR_DEFINE_BOOL(gh3_native_format_log, false, "GH3",
                     "Uma linha \"format:\" por alvo criado com o VkFormat, o formato do guest, "
                     "16F, gamma, clear inicial, scene scale e alias (F0.4 do plano de 60 FPS)");
+REXCVAR_DEFINE_BOOL(gh3_native_spirv_opt, false, "GH3",
+                    "Passa cada shader traduzido pelo spvtools::Optimizer (RegisterPerformancePasses) "
+                    "antes de criar o VkShaderModule, validando a entrada e a saida; se qualquer "
+                    "etapa falhar usa o original e conta fallback (F2.2 do plano de 60 FPS)");
 
 // A auditoria numera os VkFormat para compilar sem o SDK; se um valor mudar, o build acusa aqui.
 static_assert(uint32_t(VK_FORMAT_R8G8B8A8_UNORM) == gh3::native::format_log::kR8G8B8A8Unorm);
@@ -1420,6 +1425,9 @@ struct Renderer::Impl {
   const PipelineLayout* GetPipelineLayout(uint32_t tex_vs, uint32_t samp_vs, uint32_t tex_ps,
                                           uint32_t samp_ps);
   bool EnsureTranslated(VulkanShader::VulkanTranslation* translation, bool* pending_out);
+  // T35: VkShaderModule do shader, otimizado pelo spirv-opt quando a cvar está ligada. Criado uma
+  // vez por tradução (não por quadro); em falha cai no módulo original do SDK.
+  VkShaderModule ShaderModuleFor(VulkanShader::VulkanTranslation* translation);
   void DrainTranslations();
   void TranslationThread();
   std::unique_ptr<SpirvShaderTranslator> worker_translator;
@@ -1432,6 +1440,12 @@ struct Renderer::Impl {
   std::vector<VulkanShader::VulkanTranslation*> translations_done;
   std::atomic<uint32_t> translations_done_count{0};
   bool translation_stop = false;
+  // T35: módulos do spirv-opt por tradução (a tradução do SDK fica intacta para o fallback).
+  std::mutex optimized_modules_mutex;
+  std::unordered_map<VulkanShader::VulkanTranslation*, VkShaderModule> optimized_shader_modules;
+  std::mutex spirv_opt_stats_mutex;
+  spirv_opt::Stats spirv_opt_stats;
+  std::atomic<uint32_t> spirv_opt_fallbacks_logged{0};
   struct PipelineJob {
     uint64_t hash = 0;
     PipelineKey key = {};
@@ -2197,6 +2211,13 @@ void Renderer::Impl::Shutdown() {
     if (module) dfn().vkDestroyShaderModule(vk, module, nullptr);
   }
   geometry_shaders.clear();
+  {
+    std::lock_guard<std::mutex> lock(optimized_modules_mutex);
+    for (auto& [translation, module] : optimized_shader_modules) {
+      if (module) dfn().vkDestroyShaderModule(vk, module, nullptr);
+    }
+    optimized_shader_modules.clear();
+  }
   for (auto& [key, layout] : pipeline_layouts) {
     dfn().vkDestroyPipelineLayout(vk, layout.layout, nullptr);
   }
@@ -2302,6 +2323,58 @@ const PipelineLayout* Renderer::Impl::GetPipelineLayout(uint32_t tex_vs, uint32_
   return &pipeline_layouts.emplace(key, layout).first->second;
 }
 
+// T35: um módulo por tradução, criado uma vez (o otimizador custa dezenas de ms, nunca por quadro).
+VkShaderModule Renderer::Impl::ShaderModuleFor(VulkanShader::VulkanTranslation* translation) {
+  if (!REXCVAR_GET(gh3_native_spirv_opt)) {
+    return translation->GetOrCreateShaderModule();
+  }
+  {
+    std::lock_guard<std::mutex> lock(optimized_modules_mutex);
+    auto it = optimized_shader_modules.find(translation);
+    if (it != optimized_shader_modules.end()) {
+      return it->second;
+    }
+  }
+  const std::vector<uint8_t>& bytes = translation->translated_binary();
+  std::vector<uint32_t> binary(bytes.size() / sizeof(uint32_t));
+  if (!binary.empty()) {
+    std::memcpy(binary.data(), bytes.data(), binary.size() * sizeof(uint32_t));
+  }
+  const spirv_opt::Outcome outcome = spirv_opt::Optimize(binary);
+  {
+    std::lock_guard<std::mutex> lock(spirv_opt_stats_mutex);
+    spirv_opt_stats.Add(outcome);
+  }
+  if (outcome.fallback) {
+    // Uma linha por motivo, para o fallback não virar silêncio no log.
+    const uint32_t bit = 1u << uint32_t(outcome.reason);
+    if (!(spirv_opt_fallbacks_logged.fetch_or(bit) & bit)) {
+      static const char* const kReasons[] = {"", "module too small", "invalid input",
+                                             "optimizer failed", "invalid output"};
+      REXLOG_INFO("[native] spirv-opt: using the original shader ({})",
+                  kReasons[uint32_t(outcome.reason)]);
+    }
+  }
+  VkShaderModule module = VK_NULL_HANDLE;
+  if (outcome.optimized) {
+    VkShaderModuleCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    info.codeSize = binary.size() * sizeof(uint32_t);
+    info.pCode = binary.data();
+    if (dfn().vkCreateShaderModule(vk, &info, nullptr, &module) != VK_SUCCESS) {
+      module = VK_NULL_HANDLE;
+    }
+  }
+  if (module == VK_NULL_HANDLE) {
+    // Sem otimização (ou o driver recusou o módulo otimizado): o original do tradutor, que o
+    // VulkanTranslation é dono de destruir. Não entra no mapa (senão seria destruído duas vezes).
+    return translation->GetOrCreateShaderModule();
+  }
+  std::lock_guard<std::mutex> lock(optimized_modules_mutex);
+  optimized_shader_modules[translation] = module;
+  return module;
+}
+
 // Translation runs on one worker thread with a translator of its own. Being one
 // thread matters: the first completed translation of a shader fills the
 // shader's binding lists, and every later one leaves them alone, so a
@@ -2317,7 +2390,7 @@ bool Renderer::Impl::EnsureTranslated(VulkanShader::VulkanTranslation* translati
     }
     if (!REXCVAR_GET(gh3_native_async_pipelines) || !translation_thread.joinable()) {
       bool ok = translator->TranslateAnalyzedShader(*translation);
-      if (ok) translation->GetOrCreateShaderModule();
+      if (ok) ShaderModuleFor(translation);
       ++stats().shaders_translated;
       translation_state[translation] = 2;
       if (!ok) {
@@ -2339,7 +2412,7 @@ bool Renderer::Impl::EnsureTranslated(VulkanShader::VulkanTranslation* translati
     *pending_out = true;
     return false;
   }
-  return translation->is_valid() && translation->shader_module() != VK_NULL_HANDLE;
+  return translation->is_valid() && ShaderModuleFor(translation) != VK_NULL_HANDLE;
 }
 
 void Renderer::Impl::DrainTranslations() {
@@ -2372,7 +2445,7 @@ void Renderer::Impl::TranslationThread() {
       translation_jobs.pop_front();
     }
     if (worker_translator->TranslateAnalyzedShader(*translation)) {
-      translation->GetOrCreateShaderModule();
+      ShaderModuleFor(translation);
     } else {
       REXLOG_ERROR("[native] Shader {:016X} did not translate",
                    translation->shader().ucode_data_hash());
@@ -2402,8 +2475,8 @@ VkPipeline Renderer::Impl::GetPipeline(const PipelineKey& key,
   PipelineJob job;
   job.hash = hash;
   job.key = key;
-  job.vertex = vs->shader_module();
-  job.pixel = ps ? ps->shader_module() : VK_NULL_HANDLE;
+  job.vertex = ShaderModuleFor(vs);
+  job.pixel = ps ? ShaderModuleFor(ps) : VK_NULL_HANDLE;
   job.geometry = geometry;
   job.layout = layout;
   if (REXCVAR_GET(gh3_native_async_pipelines) && pipeline_thread.joinable()) {
@@ -5430,6 +5503,21 @@ bool Renderer::Initialize(rex::ui::vulkan::VulkanProvider* provider, rex::memory
 
 std::string Renderer::TakeTextureUploadReport() {
   return impl_ ? impl_->textures.TakeUploadReport() : std::string();
+}
+
+std::string Renderer::TakeSpirvOptReport() {
+  if (!impl_) {
+    return std::string();
+  }
+  std::lock_guard<std::mutex> lock(impl_->spirv_opt_stats_mutex);
+  if (!impl_->spirv_opt_stats.shaders) {
+    return std::string();
+  }
+  // Cumulativo: o relatório de 10 s volta a linha enquanto houver shaders, como as outras linhas
+  // "[native] last 10 s" (não some quando um intervalo não traduziu nada).
+  return fmt::format("spirv-opt: {} shaders, {:.1f}% fewer instructions ({} fallbacks)",
+                     impl_->spirv_opt_stats.shaders, impl_->spirv_opt_stats.FewerPercent(),
+                     impl_->spirv_opt_stats.fallbacks);
 }
 
 void Renderer::Flush() {
