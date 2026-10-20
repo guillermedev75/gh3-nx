@@ -20,10 +20,11 @@
 
 namespace gh3::native::spirv_opt {
 
-// Número de instruções de um módulo SPIR-V (não de palavras).
+// Número de instruções de um módulo SPIR-V (não de palavras). As 5 primeiras palavras são o
+// cabeçalho (magia, versão, gerador, bound, schema) e não contam como instrução.
 inline uint32_t CountInstructions(const std::vector<uint32_t>& binary) {
   uint32_t count = 0;
-  size_t i = 0;
+  size_t i = 5;
   while (i < binary.size()) {
     const uint32_t words = binary[i] >> 16;
     if (!words) {

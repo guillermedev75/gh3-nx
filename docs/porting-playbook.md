@@ -423,3 +423,34 @@ tem passe de if-para-predicado, então todo `if` que sobra vira `SSY/BRA/SYNC` d
   precisa de medição no aparelho; fica como tarefa própria.
 - **Build**: `tools/build_mesa.sh` refeito com as imagens em cache (331,7 s medido); driver em
   `out/driver-sdk/lib/{libvulkan.a,libnak_rs.a}`.
+
+### F2.4 — simplificação dos shaders traduzidos (2026-10-20)
+
+`src/native/native_shader_simplify.h` roda depois da tradução e antes de `vkCreateShaderModule`
+(`gh3_native_shader_simplify`, padrão **true**; o `spirv-opt`, quando ligado, roda depois). Três regras,
+todas tiradas dos ganhos que o nfsmw-nx mediu (`~/gh3-refs/nfsmw-nx/docs/shaders.md`):
+
+- **`max(a,a)`/`min(a,a)` como cópia**: `GLSL.std.450` FMin/UMin/SMin/FMax/UMax/SMax com os dois
+  operandos iguais vira `OpCopyObject`. No nfsmw essas instruções chegavam ao GPU como `fcanonicalize` →
+  `fmul(a, 1.0)`; o NAK resolve a cópia como movimentação de registrador. A regra cobre NaN e zero
+  negativo (a identidade vale para os dois).
+- **Query de tamanho de textura repetida**: duas `OpImageQuerySizeLod`/`Size`/`Levels`/`Samples`/
+  `QueryLod` com o mesmo tipo e os mesmos operandos, no mesmo bloco, viram uma query + cópia do primeiro
+  resultado. O tamanho da imagem não muda dentro do bloco.
+- **Branch redundante**: `OpBranchConditional` com os dois destinos iguais vira `OpBranch` (removendo o
+  `OpSelectionMerge` do cabeçalho, senão o bloco fica inválido) e um bloco que só salta para outro
+  (`OpLabel` + `OpBranch`) é fundido no predecessor quando tem um único predecessor e não é alvo de
+  merge/phi/switch. É a versão pós-tradução do "1.806 `if (p0)` → 641" do nfsmw.
+
+O módulo é **validado antes e depois**; qualquer falha devolve o original intacto e conta fallback (uma
+linha por motivo no log). O passe custa uma validação por tradução (uma vez por shader, nunca por quadro).
+O log de 10 s é `[native] shader simplify: N shaders, A max/min as copies, B texture queries reused, C
+branches merged (X% fewer words, M fallbacks)`.
+
+**Medido no GH3 (captura do T37, 1026 shaders)**: 0 de cada regra, 0 fallbacks, 0,0% menos palavras —
+ou seja, **não há o que cortar aqui**: o tradutor do SDK (herdado do Xenia) já devolve `a` quando os
+operandos de MAX/MIN são iguais (`spirv_translator_alu.cpp`, `if (a == b) return a;` e
+`identical == used_result_components`), só emite `OpImageQueryLod` (nenhuma query de tamanho) e gera CFG
+sem blocos-saltinho. A captura de gameplay ficou idêntica (white=0,001, stddev=57,2). O passe fica como
+**guarda** para quando um tradutor/ucode futuro voltar a emitir esses padrões, com o custo de uma
+validação no carregamento; o ganho de GPU do F2.4 no Switch é zero enquanto for assim (F5 confirma).

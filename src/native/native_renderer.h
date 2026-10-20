@@ -133,6 +133,8 @@ class Renderer {
   std::string TakeTextureUploadReport();
   // F2.2: resumo cumulativo do spirv-opt (vazio se nenhum shader passou por ele ainda).
   std::string TakeSpirvOptReport();
+  // F2.4: resumo cumulativo da simplificação dos shaders (vazio se nenhum passou por ela).
+  std::string TakeShaderSimplifyReport();
 
   // Called for every register the command ring writes, so constant uploads
   // can be reused while their registers stay unchanged.

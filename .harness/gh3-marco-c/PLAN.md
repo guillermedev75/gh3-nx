@@ -129,7 +129,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [x] T36: 60fps F2.3 — NAK/draw path do nfsmw (latencia 200, peephole 8)
   aceite: .venv/bin/python -m pytest -q tests/test_nak_patch.py && tools/build_mesa.sh --check
   detalhe: patch local no Mesa (como o 0005); build do NVK; documentar o ganho no Switch (F5). Plano F2.3.
-- [ ] T37: 60fps F2.4 — simplificar shaders (max(a,a), textureSize, branches)
+- [x] T37: 60fps F2.4 — simplificar shaders (max(a,a), textureSize, branches)
   aceite: .venv/bin/python -m pytest -q tests/test_shader_simplify.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-simpl.png && python3 tools/image_stats.py out/parity/native-simpl.png --max-white 0.15 --min-stddev 20
   detalhe: pos-passe no SPIR-V traduzido; paridade. Plano F2.4.
 - [ ] T38: 60fps F2.5 — prewarm de pipelines + cache versionado

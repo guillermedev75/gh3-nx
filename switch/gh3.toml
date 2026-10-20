@@ -50,6 +50,7 @@ gh3_native_scene_cas_sharpness = 0.2
 # spirv-opt nos shaders traduzidos (F2.2/T35): valida e otimiza cada módulo antes do driver; em
 # falha usa o original. O ganho é GPU (o NAK compila menos instruções), medido no Switch.
 gh3_native_spirv_opt = true
+gh3_native_shader_simplify = true
 # Loga a contagem de cedências a cada 4096. Diagnóstico.
 gh3_guest_waits_stats = false
 

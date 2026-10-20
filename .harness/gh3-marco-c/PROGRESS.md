@@ -259,3 +259,11 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - decisões (e por quê): a latência 200 (textura/memória, SM<70), o `peephole_select` 8 e a revisão `1<<24` do cache **já vinham** no patch 0002 da série do project8-sw fixada (nfsmw-nx, MIT) — um patch local com os mesmos hunks não aplicaria sobre a árvore já patcheada, então o T36 torna o caminho verificável em vez de duplicá-lo. O `--check` antes só provava `vkCreateInstance`; agora reprova árvore sem o NAK (testado mutando cópias da árvore).
 - pendente: ganho real de GPU/FPS no Switch só na F5 (`NVK_SHADER_STATS=1`: conferir "B de memoria local" = 0); o resto do draw path do nfsmw (rebinds de constant buffer, set 4 por diferenças) não foi portado — entrelaçado com os sets do nfsmw e sem medição no aparelho.
 - 2026-10-20 03:11 T36 ✅ aceita (iter 9)
+
+### T37 — tentativa 1
+- feito: `src/native/native_shader_simplify.h` (puro + validador do SPIRV-Tools): max(a,a)/min(a,a) → `OpCopyObject`, query de tamanho de textura repetida no mesmo bloco → cópia do 1º resultado, branch redundante (t==f e bloco-saltinho de 1 predecessor) fundido; valida antes/depois e cai no original em falha. Cvar `gh3_native_shader_simplify` (padrão true; true no `switch/gh3.toml`), roda mesmo com o spirv-opt desligado e loga `shader simplify: …` a cada 10 s; `tests/test_shader_simplify.py` (8). Corrigi `spirv_opt::CountInstructions`, que contava o cabeçalho de 5 palavras como 1 instrução (o relatório do F2.2 passa a ter contagem real).
+- decisões (e por quê): medido no GH3 — **1026 shaders, 0 de cada regra, 0 fallbacks, 0,0% menos palavras**: o tradutor do SDK já devolve `a` no max(a,a) (`spirv_translator_alu.cpp`), só emite `OpImageQueryLod` e o CFG não tem blocos vazios. O passe fica como guarda (custo: 1 validação por tradução, nunca por quadro); nenhum ganho de GPU/FPS é reivindicado.
+- verificado: aceite exit 0 (8 testes; captura white=0,014 stddev=55,9 mean=89,5; log `shader simplify: 1026 shaders … 0 fallbacks`); suíte **237 passed**; build Mac ok; os dois .obj nativos compilam no devkitA64 (GCC 15.2). Playbook §8/F2.4.
+- pendente: NRO do Switch não rebuildado (T46); ganho real do F2.4 no aparelho só se o tradutor voltar a emitir os padrões (F5).
+- 2026-10-20 T37 (iter 1)
+- 2026-10-20 03:49 T37 ✅ aceita (iter 10)

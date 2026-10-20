@@ -67,6 +67,7 @@ extern "C" {
 #include "native_scene_dynamic.h"
 #include "native_scene_cas.h"
 #include "native_spirv_opt.h"
+#include "native_shader_simplify.h"
 
 // T32: o SPIR-V que o próprio SDK usa no presenter para CAS (FidelityFX), reaproveitado no blit que
 // sobe a cena escalada. O VS desenha o retângulo em NDC e o PS lê 9 texels e aplica o CAS.
@@ -140,6 +141,11 @@ REXCVAR_DEFINE_BOOL(gh3_native_spirv_opt, false, "GH3",
                     "Passa cada shader traduzido pelo spvtools::Optimizer (RegisterPerformancePasses) "
                     "antes de criar o VkShaderModule, validando a entrada e a saida; se qualquer "
                     "etapa falhar usa o original e conta fallback (F2.2 do plano de 60 FPS)");
+REXCVAR_DEFINE_BOOL(gh3_native_shader_simplify, true, "GH3",
+                    "Simplifica cada shader traduzido antes do driver: max(a,a)/min(a,a) vira copia, "
+                    "query de tamanho de textura repetida e' reaproveitada e branch redundante e' "
+                    "fundido; o modulo e' validado antes e depois e cai no original em falha "
+                    "(F2.4 do plano de 60 FPS)");
 
 // A auditoria numera os VkFormat para compilar sem o SDK; se um valor mudar, o build acusa aqui.
 static_assert(uint32_t(VK_FORMAT_R8G8B8A8_UNORM) == gh3::native::format_log::kR8G8B8A8Unorm);
@@ -1445,7 +1451,9 @@ struct Renderer::Impl {
   std::unordered_map<VulkanShader::VulkanTranslation*, VkShaderModule> optimized_shader_modules;
   std::mutex spirv_opt_stats_mutex;
   spirv_opt::Stats spirv_opt_stats;
+  shader_simplify::Stats shader_simplify_stats;
   std::atomic<uint32_t> spirv_opt_fallbacks_logged{0};
+  std::atomic<uint32_t> shader_simplify_fallbacks_logged{0};
   struct PipelineJob {
     uint64_t hash = 0;
     PipelineKey key = {};
@@ -2323,9 +2331,13 @@ const PipelineLayout* Renderer::Impl::GetPipelineLayout(uint32_t tex_vs, uint32_
   return &pipeline_layouts.emplace(key, layout).first->second;
 }
 
-// T35: um módulo por tradução, criado uma vez (o otimizador custa dezenas de ms, nunca por quadro).
+// T35/T37: um módulo por tradução, criado uma vez (a simplificação e o otimizador custam caro,
+// nunca por quadro). A simplificação roda mesmo com o spirv-opt desligado: é ela que tira o
+// max(a,a) do caminho do driver na GPU.
 VkShaderModule Renderer::Impl::ShaderModuleFor(VulkanShader::VulkanTranslation* translation) {
-  if (!REXCVAR_GET(gh3_native_spirv_opt)) {
+  const bool simplify_shader = REXCVAR_GET(gh3_native_shader_simplify);
+  const bool optimize_shader = REXCVAR_GET(gh3_native_spirv_opt);
+  if (!simplify_shader && !optimize_shader) {
     return translation->GetOrCreateShaderModule();
   }
   {
@@ -2340,23 +2352,47 @@ VkShaderModule Renderer::Impl::ShaderModuleFor(VulkanShader::VulkanTranslation* 
   if (!binary.empty()) {
     std::memcpy(binary.data(), bytes.data(), binary.size() * sizeof(uint32_t));
   }
-  const spirv_opt::Outcome outcome = spirv_opt::Optimize(binary);
-  {
-    std::lock_guard<std::mutex> lock(spirv_opt_stats_mutex);
-    spirv_opt_stats.Add(outcome);
+  bool changed = false;
+  if (simplify_shader) {
+    const shader_simplify::Outcome outcome = shader_simplify::Simplify(binary);
+    {
+      std::lock_guard<std::mutex> lock(spirv_opt_stats_mutex);
+      shader_simplify_stats.Add(outcome);
+    }
+    if (outcome.fallback) {
+      // Uma linha por motivo, para o fallback não virar silêncio no log.
+      const uint32_t bit = 1u << uint32_t(outcome.reason);
+      if (!(shader_simplify_fallbacks_logged.fetch_or(bit) & bit)) {
+        static const char* const kReasons[] = {"", "module too small", "invalid input",
+                                               "invalid output"};
+        REXLOG_INFO("[native] shader simplify: using the original shader ({})",
+                    kReasons[uint32_t(outcome.reason)]);
+      }
+    } else if (outcome.modified) {
+      changed = true;
+    }
   }
-  if (outcome.fallback) {
-    // Uma linha por motivo, para o fallback não virar silêncio no log.
-    const uint32_t bit = 1u << uint32_t(outcome.reason);
-    if (!(spirv_opt_fallbacks_logged.fetch_or(bit) & bit)) {
-      static const char* const kReasons[] = {"", "module too small", "invalid input",
-                                             "optimizer failed", "invalid output"};
-      REXLOG_INFO("[native] spirv-opt: using the original shader ({})",
-                  kReasons[uint32_t(outcome.reason)]);
+  if (optimize_shader) {
+    const spirv_opt::Outcome outcome = spirv_opt::Optimize(binary);
+    {
+      std::lock_guard<std::mutex> lock(spirv_opt_stats_mutex);
+      spirv_opt_stats.Add(outcome);
+    }
+    if (outcome.fallback) {
+      // Uma linha por motivo, para o fallback não virar silêncio no log.
+      const uint32_t bit = 1u << uint32_t(outcome.reason);
+      if (!(spirv_opt_fallbacks_logged.fetch_or(bit) & bit)) {
+        static const char* const kReasons[] = {"", "module too small", "invalid input",
+                                               "optimizer failed", "invalid output"};
+        REXLOG_INFO("[native] spirv-opt: using the original shader ({})",
+                    kReasons[uint32_t(outcome.reason)]);
+      }
+    } else if (outcome.optimized) {
+      changed = true;
     }
   }
   VkShaderModule module = VK_NULL_HANDLE;
-  if (outcome.optimized) {
+  if (changed) {
     VkShaderModuleCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     info.codeSize = binary.size() * sizeof(uint32_t);
@@ -2366,7 +2402,7 @@ VkShaderModule Renderer::Impl::ShaderModuleFor(VulkanShader::VulkanTranslation* 
     }
   }
   if (module == VK_NULL_HANDLE) {
-    // Sem otimização (ou o driver recusou o módulo otimizado): o original do tradutor, que o
+    // Sem simplificação/otimização (ou o driver recusou o módulo): o original do tradutor, que o
     // VulkanTranslation é dono de destruir. Não entra no mapa (senão seria destruído duas vezes).
     return translation->GetOrCreateShaderModule();
   }
@@ -5518,6 +5554,22 @@ std::string Renderer::TakeSpirvOptReport() {
   return fmt::format("spirv-opt: {} shaders, {:.1f}% fewer instructions ({} fallbacks)",
                      impl_->spirv_opt_stats.shaders, impl_->spirv_opt_stats.FewerPercent(),
                      impl_->spirv_opt_stats.fallbacks);
+}
+
+std::string Renderer::TakeShaderSimplifyReport() {
+  if (!impl_) {
+    return std::string();
+  }
+  std::lock_guard<std::mutex> lock(impl_->spirv_opt_stats_mutex);
+  if (!impl_->shader_simplify_stats.modules) {
+    return std::string();
+  }
+  return fmt::format(
+      "shader simplify: {} shaders, {} max/min as copies, {} texture queries reused, "
+      "{} branches merged ({:.1f}% fewer words, {} fallbacks)",
+      impl_->shader_simplify_stats.modules, impl_->shader_simplify_stats.max_min,
+      impl_->shader_simplify_stats.texture_queries, impl_->shader_simplify_stats.branches,
+      impl_->shader_simplify_stats.FewerWordsPercent(), impl_->shader_simplify_stats.fallbacks);
 }
 
 void Renderer::Flush() {
