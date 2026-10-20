@@ -38,8 +38,9 @@ gh3_vblank_late_no_wait = false
 gh3_native_skip_shadows = true
 gh3_native_skip_bloom = true
 # Cena 3D a 75% da resolução da HUD (960x540 com a HUD em 1280x720): o passe principal com profundidade
-# é o maior custo de GPU no Switch (src/native/native_scene_scale.h). 1.0 desliga.
-gh3_native_scene_scale = 0.75
+# é o maior custo de GPU no Switch (src/native/native_scene_scale.h). 1.0 desliga. Piso 0.65 até o
+# controlador dinâmico 0.65-1.0 entrar (plano 2026-10-19-gh3-nx-60fps).
+gh3_native_scene_scale = 0.65
 # Loga a contagem de cedências a cada 4096. Diagnóstico.
 gh3_guest_waits_stats = false
 

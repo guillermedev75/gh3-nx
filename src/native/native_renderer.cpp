@@ -2669,6 +2669,7 @@ RenderTarget* Renderer::Impl::CreateOrGetRenderTarget(const RenderTargetKey& key
   if (old) {
     rt->alias_seq = old->alias_seq;
     rt->synced_seq = old->synced_seq;
+    rt->known_1x_height = old->known_1x_height;
     rt->scene_dirty = old->scene_dirty;
     rt->scene_touch = old->scene_touch;
     rt->scene_seen = old->scene_seen;
@@ -3248,9 +3249,12 @@ bool Renderer::Impl::BuildDrawSetup(uint32_t initiator_value) {
   }
   // O cap do render area dos draws 4x: no modo samples-as-pixels o alvo e' 1x (altura cheia);
   // no alias do T15 a imagem 4x so precisa da altura do 1x dividida pelo empilhamento (2).
-  if (guest_msaa >= 2 && st.scissor.extent[1] >= 8192 && targets.color[0]) {
+  // T24/F1.2: vale para 1x tambem. Um draw com o scissor default (8192) cobre "o EDRAM inteiro";
+  // a altura real do alvo e' a que os draws explicitos ja revelaram (known_1x_height). No alias do
+  // T15 a imagem 4x so precisa dessa altura dividida pelo empilhamento (2).
+  if (st.scissor.extent[1] >= 8192 && targets.color[0]) {
     uint32_t useful = 0;
-    if (msaa_as_samples) {
+    if (guest_msaa == 0 || msaa_as_samples) {
       useful = targets.color[0]->known_1x_height;
     } else {
       RenderTargetKey full_key = targets.color[0]->key;
