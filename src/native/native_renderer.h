@@ -117,7 +117,8 @@ class Renderer {
             uint32_t height);
 
   // Loads the driver's compiled pipelines saved by an earlier session, and
-  // saves them there as new ones appear. Call before the guest starts.
+  // saves them there as new ones appear. Also recreates the pipelines listed in
+  // the prewarm file next to it (F2.5). Call before the guest starts.
   void InitializeDriverCache(const std::filesystem::path& cache_root, uint32_t title_id);
 
   // The 256-entry gamma ramp, as the DC_LUT_30_COLOR register packs it.
@@ -135,6 +136,9 @@ class Renderer {
   std::string TakeSpirvOptReport();
   // F2.4: resumo cumulativo da simplificação dos shaders (vazio se nenhum passou por ela).
   std::string TakeShaderSimplifyReport();
+  // F2.5: quantos pipelines o prewarm recriou na inicialização e quantos apareceram depois dela
+  // (vazio se o cache ainda não foi inicializado).
+  std::string TakePrewarmReport();
 
   // Called for every register the command ring writes, so constant uploads
   // can be reused while their registers stay unchanged.

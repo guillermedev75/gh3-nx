@@ -454,3 +454,37 @@ operandos de MAX/MIN são iguais (`spirv_translator_alu.cpp`, `if (a == b) retur
 sem blocos-saltinho. A captura de gameplay ficou idêntica (white=0,001, stddev=57,2). O passe fica como
 **guarda** para quando um tradutor/ucode futuro voltar a emitir esses padrões, com o custo de uma
 validação no carregamento; o ganho de GPU do F2.4 no Switch é zero enquanto for assim (F5 confirma).
+
+### F2.5 — prewarm de pipelines + cache versionado (2026-10-20)
+
+O driver leva **59-160 ms** por pipeline novo no Switch. O `gh3_native_async_pipelines` já tira a
+compilação do thread do anel, mas os draws que precisam do pipeline ficam sem desenhar até ele existir.
+O F2.5 fecha isso guardando as chaves e recriando tudo **antes de o jogo rodar**.
+
+- **`src/native/native_pipeline_prewarm.h`** (puro, testado sem GPU): formato do arquivo
+  (`pipelines-<versão>.bin`, ao lado do cache do driver), cabeçalho com magic + versão + contagem +
+  XXH3 do corpo, leitura validada (arquivo truncado, de outra versão, com hash diferente ou com
+  contagem acima do teto é recusado inteiro), dedupe por chave e a linha de log.
+- **Versão do cache** = `(formato << 8) | passes`: o spirv-opt (F2.2) e a simplificação (F2.4) mudam o
+  SPIR-V que o driver compila, então trocar qualquer um muda o nome/versão do **cache do driver**
+  também (`native-<título>-<vendor>-<device>-<driver>-<versão>.cache`) e nada antigo é reaproveitado.
+  O cabeçalho do cache do driver ganhou a versão (era `{magic, tamanho, hash}`, agora
+  `{magic, versão, tamanho, hash}`): um arquivo de outra versão é ignorado (pode apagar os antigos).
+- **Registro**: `GetPipeline` copia a `PipelineKey` e o microcódigo dos shaders (ordem do host, como o
+  `Shader` do SDK) na primeira vez que uma chave aparece; o arquivo é gravado em thread própria a cada
+  10 s de mudança e no `Shutdown` (o capture encerra com SIGTERM, então a gravação periódica importa).
+- **Prewarm** (`InitializeShaderStorage` → `InitializeDriverCache`, antes de o guest rodar): recria os
+  shaders a partir do microcódigo (`LoadShader` do jogo depois acha o mesmo objeto pelo hash), traduz
+  com o tradutor do thread principal (os workers ainda estão ociosos, então continua um thread só
+  traduzindo), recria a geometria, o layout (contagens empacotadas em `key.layout`) e o pipeline.
+  Tudo roda no mapa `pipelines`, então o primeiro draw da gameplay já acha o pipeline pronto.
+- **Log**: `[native] pipeline prewarm: N of M pipelines from the cache (version 0x..., X failed, Y
+  skipped)` na inicialização e, a cada 10 s, `pipeline prewarm: N at start (...), M new since` — o M é
+  o número que o plano quer ver zerado na gameplay.
+- **Medido no Mac (T38)**: 110 de 110 pipelines recriados em ~1,0 s de inicialização (cache do driver
+  já quente); a captura ficou igual (white=0,002, stddev=51,6). Uma corrida seguinte ainda viu 7-10
+  chaves novas: o manifesto é a união das telas já vistas e converge com execuções (a música não é
+  determinística em wall clock, ver T16).
+- **Cvar**: `gh3_native_pipeline_prewarm` (padrão true; desligar só tira o prewarm, o cache do driver
+  continua versionado). O arquivo é **local da máquina**, derivado do jogo como o cache do driver —
+  nunca entra no repositório nem no pacote do SD.

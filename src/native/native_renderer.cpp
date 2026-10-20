@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
@@ -68,6 +69,7 @@ extern "C" {
 #include "native_scene_cas.h"
 #include "native_spirv_opt.h"
 #include "native_shader_simplify.h"
+#include "native_pipeline_prewarm.h"
 
 // T32: o SPIR-V que o próprio SDK usa no presenter para CAS (FidelityFX), reaproveitado no blit que
 // sobe a cena escalada. O VS desenha o retângulo em NDC e o PS lê 9 texels e aplica o CAS.
@@ -146,6 +148,10 @@ REXCVAR_DEFINE_BOOL(gh3_native_shader_simplify, true, "GH3",
                     "query de tamanho de textura repetida e' reaproveitada e branch redundante e' "
                     "fundido; o modulo e' validado antes e depois e cai no original em falha "
                     "(F2.4 do plano de 60 FPS)");
+REXCVAR_DEFINE_BOOL(gh3_native_pipeline_prewarm, true, "GH3",
+                    "Guarda as chaves dos pipelines usados (com o microcodigo dos shaders) ao lado "
+                    "do cache do driver e recria esses pipelines na inicializacao, antes do jogo: "
+                    "o primeiro uso na gameplay nao espera a compilacao (F2.5 do plano de 60 FPS)");
 
 // A auditoria numera os VkFormat para compilar sem o SDK; se um valor mudar, o build acusa aqui.
 static_assert(uint32_t(VK_FORMAT_R8G8B8A8_UNORM) == gh3::native::format_log::kR8G8B8A8Unorm);
@@ -592,6 +598,8 @@ struct Renderer::Impl {
   std::unordered_map<uint32_t, VkShaderModule> geometry_shaders;
   VkPipelineCache driver_cache = VK_NULL_HANDLE;
   std::filesystem::path driver_cache_path;
+  // F2.5: versão do cache do driver (formato da chave + passes de shader), gravada no cabeçalho.
+  uint32_t cache_version_ = 0;
   uint64_t pipelines_at_last_save = 0;
   std::chrono::steady_clock::time_point last_pipeline_time;
   size_t driver_cache_saved_size = 0;
@@ -1477,6 +1485,24 @@ struct Renderer::Impl {
   std::atomic<uint32_t> pipelines_completed_count{0};
   bool pipeline_stop = false;
 
+  // F2.5: as chaves que já viraram pipeline, com o microcódigo dos shaders, para o prewarm da
+  // próxima execução. O arquivo fica ao lado do cache do driver e tem a mesma versão dele.
+  std::mutex prewarm_mutex;
+  std::unordered_map<uint64_t, prewarm::Entry> prewarm_entries;
+  prewarm::Stats prewarm_stats;
+  std::filesystem::path prewarm_path;
+  size_t prewarm_saved_size = 0;
+  size_t prewarm_saved_count = 0;
+  std::atomic<size_t> prewarm_entry_count{0};
+  std::chrono::steady_clock::time_point last_prewarm_save;
+  std::atomic<bool> prewarm_writing{false};
+  std::thread prewarm_writer;
+  uint32_t pipelines_at_prewarm = 0;
+  void RecordPipeline(uint64_t hash, const PipelineKey& key,
+                      VulkanShader::VulkanTranslation* vs, VulkanShader::VulkanTranslation* ps);
+  bool PrewarmPipelines(uint32_t version);
+  void SavePrewarmManifest();
+
   // --- Render targets ------------------------------------------------------------
 
   RenderTarget* GetRenderTarget(const RenderTargetKey& key, uint32_t min_height);
@@ -2150,6 +2176,10 @@ void Renderer::Impl::Shutdown() {
   if (driver_cache_writer.joinable()) {
     driver_cache_writer.join();
   }
+  SavePrewarmManifest();
+  if (prewarm_writer.joinable()) {
+    prewarm_writer.join();
+  }
   if (translation_thread.joinable()) {
     {
       std::lock_guard<std::mutex> lock(translation_mutex);
@@ -2515,6 +2545,9 @@ VkPipeline Renderer::Impl::GetPipeline(const PipelineKey& key,
   job.pixel = ps ? ShaderModuleFor(ps) : VK_NULL_HANDLE;
   job.geometry = geometry;
   job.layout = layout;
+  if (job.vertex) {
+    RecordPipeline(hash, key, vs, ps);
+  }
   if (REXCVAR_GET(gh3_native_async_pipelines) && pipeline_thread.joinable()) {
     // Compiled on the worker. Until it is ready the draws that need it are
     // skipped, a frame or two of missing objects instead of a frozen frame.
@@ -2728,6 +2761,31 @@ VkPipeline Renderer::Impl::CreatePipeline(const PipelineJob& job) {
     pipeline = VK_NULL_HANDLE;
   }
   return pipeline;
+}
+
+// F2.5: guarda a chave e o microcódigo dos shaders de um pipeline que acabou de ser compilado, para
+// recriá-lo na próxima execução. Copiar o microcódigo custa pouco e só acontece no primeiro uso da
+// chave; o mapa respeita o teto do arquivo.
+void Renderer::Impl::RecordPipeline(uint64_t hash, const PipelineKey& key,
+                                    VulkanShader::VulkanTranslation* vs,
+                                    VulkanShader::VulkanTranslation* ps) {
+  std::lock_guard<std::mutex> lock(prewarm_mutex);
+  if (prewarm_entries.size() >= prewarm::kMaxEntries) return;
+  if (prewarm_entries.count(hash)) return;
+  const VulkanShader& vs_shader = static_cast<const VulkanShader&>(vs->shader());
+  prewarm::Entry entry;
+  entry.hash = hash;
+  entry.key.resize(sizeof(key));
+  std::memcpy(entry.key.data(), &key, sizeof(key));
+  entry.vs_ucode.assign(vs_shader.ucode_dwords(),
+                        vs_shader.ucode_dwords() + vs_shader.ucode_dword_count());
+  if (ps) {
+    const VulkanShader& ps_shader = static_cast<const VulkanShader&>(ps->shader());
+    entry.ps_ucode.assign(ps_shader.ucode_dwords(),
+                          ps_shader.ucode_dwords() + ps_shader.ucode_dword_count());
+  }
+  prewarm_entries.emplace(hash, std::move(entry));
+  prewarm_entry_count.store(prewarm_entries.size(), std::memory_order_relaxed);
 }
 
 // --- Render targets ------------------------------------------------------------------
@@ -5375,7 +5433,16 @@ void Renderer::Impl::Swap(rex::ui::Presenter* presenter, uint32_t frontbuffer, u
   // while, off this thread: the file is tens of megabytes on the SD card.
   if (!driver_cache_path.empty() && stats().pipelines_created != pipelines_at_last_save &&
       now - last_pipeline_time > std::chrono::seconds(5) && !driver_cache_writing.load()) {
+    SavePrewarmManifest();
     SaveDriverCache();
+  }
+  // F2.5: o jogo compila pipelines durante uma tela inteira e o cache do driver espera a calmaria;
+  // o arquivo de prewarm é pequeno (dezenas de KB) e pode ser gravado a cada 10 s, para uma saída
+  // sem Shutdown (o capture encerra o processo) não perder o que foi compilado.
+  if (!prewarm_path.empty() && !prewarm_writing.load() &&
+      prewarm_entry_count.load(std::memory_order_relaxed) != prewarm_saved_count &&
+      now - last_prewarm_save > std::chrono::seconds(10)) {
+    SavePrewarmManifest();
   }
   stats().textures_uploaded = textures.stats().uploads;
   stats().texture_bytes_uploaded = textures.stats().upload_bytes;
@@ -5416,16 +5483,40 @@ void Renderer::Impl::Swap(rex::ui::Presenter* presenter, uint32_t frontbuffer, u
 namespace {
 constexpr uint64_t kDriverCacheMagic = 0x3148434E54414E52ULL;  // "RNATNCH1"
 
-std::vector<uint8_t> ReadDriverCache(const std::filesystem::path& path) {
+// F2.5: o cabeçalho carrega a versão do cache (formato da chave + passes de shader ligados). Um
+// arquivo de outra versão é recusado inteiro em vez de ser misturado com pipelines de outro SPIR-V.
+bool ReadDriverCache(const std::filesystem::path& path, uint32_t version,
+                     std::vector<uint8_t>* bytes) {
+  bytes->clear();
+  FILE* file = rex::filesystem::OpenFile(path, "rb");
+  if (!file) return false;
+  uint64_t header[4] = {};
+  if (fread(header, sizeof(header), 1, file) == 1 && header[0] == kDriverCacheMagic &&
+      header[1] == uint64_t(version) && header[2] >= 32 &&
+      header[2] <= 128u * 1024 * 1024) {
+    bytes->resize(size_t(header[2]));
+    if (fread(bytes->data(), bytes->size(), 1, file) == 1 &&
+        XXH3_64bits(bytes->data(), bytes->size()) == header[3]) {
+      fclose(file);
+      return true;
+    }
+  }
+  bytes->clear();
+  fclose(file);
+  return false;
+}
+
+std::vector<uint8_t> ReadWholeFile(const std::filesystem::path& path) {
   std::vector<uint8_t> bytes;
   if (FILE* file = rex::filesystem::OpenFile(path, "rb")) {
-    uint64_t header[3] = {};
-    if (fread(header, sizeof(header), 1, file) == 1 && header[0] == kDriverCacheMagic &&
-        header[1] >= 32 && header[1] <= 128u * 1024 * 1024) {
-      bytes.resize(size_t(header[1]));
-      if (fread(bytes.data(), bytes.size(), 1, file) != 1 ||
-          XXH3_64bits(bytes.data(), bytes.size()) != header[2]) {
-        bytes.clear();
+    if (fseek(file, 0, SEEK_END) == 0) {
+      long size = ftell(file);
+      if (size > 0 && size <= long(128 * 1024 * 1024)) {
+        bytes.resize(size_t(size));
+        if (fseek(file, 0, SEEK_SET) == 0 &&
+            fread(bytes.data(), bytes.size(), 1, file) != 1) {
+          bytes.clear();
+        }
       }
     }
     fclose(file);
@@ -5433,6 +5524,176 @@ std::vector<uint8_t> ReadDriverCache(const std::filesystem::path& path) {
   return bytes;
 }
 }  // namespace
+
+// F2.5: recria os pipelines do arquivo de prewarm. Roda na inicialização, antes do módulo do jogo
+// (InitializeShaderStorage vem antes de o thread do guest rodar), e no thread que chamou a
+// inicialização — os threads de tradução e de compilação estão parados, então a tradução aqui
+// continua sendo feita por um só thread, como o tradutor exige.
+bool Renderer::Impl::PrewarmPipelines(uint32_t version) {
+  prewarm_stats = prewarm::Stats();
+  prewarm_stats.version = version;
+  pipelines_at_prewarm = uint32_t(stats().pipelines_created);
+  if (!REXCVAR_GET(gh3_native_pipeline_prewarm)) {
+    return false;
+  }
+  std::vector<uint8_t> data = ReadWholeFile(prewarm_path);
+  prewarm::Manifest manifest;
+  if (data.empty() || !prewarm::Parse(data.data(), data.size(), version, &manifest)) {
+    return false;
+  }
+  prewarm_stats.loaded = uint32_t(manifest.entries.size());
+  auto find_or_create = [this](xenos::ShaderType type, const std::vector<uint32_t>& ucode,
+                               uint64_t hash) -> VulkanShader* {
+    auto it = shaders.find(hash);
+    if (it != shaders.end()) {
+      return it->second->type() == type ? it->second.get() : nullptr;
+    }
+    auto created = std::make_unique<VulkanShader>(device, type, hash, ucode.data(), ucode.size(),
+                                                  std::endian::native);
+    VulkanShader* shader = created.get();
+    shaders.emplace(hash, std::move(created));
+    return shader;
+  };
+  auto translate = [this](VulkanShader::VulkanTranslation* translation) -> bool {
+    if (translation->is_valid()) return ShaderModuleFor(translation) != VK_NULL_HANDLE;
+    VulkanShader& shader = static_cast<VulkanShader&>(translation->shader());
+    if (!shader.is_ucode_analyzed()) shader.AnalyzeUcode(disasm);
+    if (!translator->TranslateAnalyzedShader(*translation)) return false;
+    ++stats().shaders_translated;
+    translation_state[translation] = 2;
+    return ShaderModuleFor(translation) != VK_NULL_HANDLE;
+  };
+  std::vector<prewarm::Entry> kept;
+  kept.reserve(manifest.entries.size());
+  for (const prewarm::Entry& entry : manifest.entries) {
+    if (entry.key.size() != sizeof(PipelineKey) || entry.vs_ucode.empty()) {
+      ++prewarm_stats.skipped;
+      continue;
+    }
+    PipelineKey key;
+    std::memcpy(&key, entry.key.data(), sizeof(key));
+    // O hash da chave é o da identidade do shader que o jogo carrega (sobre o microcódigo no byte
+    // order do guest), então o microcódigo gravado aqui — já no byte order do host, como o Shader do
+    // SDK guarda — não confere por XXH3; a integridade do arquivo é o hash do corpo (Parse). O
+    // Shader criado abaixo usa key.vs_hash/ps_hash como chave, que é a mesma que LoadShader usa.
+    VulkanShader* vs =
+        find_or_create(xenos::ShaderType::kVertex, entry.vs_ucode, key.vs_hash);
+    VulkanShader* ps =
+        entry.ps_ucode.empty()
+            ? nullptr
+            : find_or_create(xenos::ShaderType::kPixel, entry.ps_ucode, key.ps_hash);
+    if (!vs || (ps == nullptr && !entry.ps_ucode.empty())) {
+      ++prewarm_stats.failed;
+      continue;
+    }
+    auto* vs_translation = static_cast<VulkanShader::VulkanTranslation*>(
+        vs->GetOrCreateTranslation(key.vs_modification));
+    auto* ps_translation =
+        ps ? static_cast<VulkanShader::VulkanTranslation*>(
+                 ps->GetOrCreateTranslation(key.ps_modification))
+           : nullptr;
+    if (!translate(vs_translation) || (ps_translation && !translate(ps_translation))) {
+      ++prewarm_stats.failed;
+      continue;
+    }
+    VkShaderModule geometry_module = VK_NULL_HANDLE;
+    if (key.geometry_shader) {
+      GeometryShaderKey geometry_key;
+      geometry_key.key = key.geometry_shader;
+      auto it = geometry_shaders.find(geometry_key.key);
+      if (it == geometry_shaders.end()) {
+        it = geometry_shaders.emplace(geometry_key.key, CreateGeometryShader(device, geometry_key))
+                 .first;
+      }
+      geometry_module = it->second;
+      if (!geometry_module) {
+        ++prewarm_stats.failed;
+        continue;
+      }
+    }
+    const PipelineLayout* pipeline_layout =
+        GetPipelineLayout(uint32_t(key.layout >> 48), uint32_t(key.layout >> 32) & 0xFFu,
+                          uint32_t(key.layout >> 16) & 0xFFu, uint32_t(key.layout) & 0xFFu);
+    if (!pipeline_layout) {
+      ++prewarm_stats.failed;
+      continue;
+    }
+    if (pipelines.count(entry.hash)) {
+      ++prewarm_stats.skipped;
+      kept.push_back(entry);
+      continue;
+    }
+    PipelineJob job;
+    job.hash = entry.hash;
+    job.key = key;
+    job.vertex = ShaderModuleFor(vs_translation);
+    job.pixel = ps_translation ? ShaderModuleFor(ps_translation) : VK_NULL_HANDLE;
+    job.geometry = geometry_module;
+    job.layout = pipeline_layout->layout;
+    VkPipeline pipeline = CreatePipeline(job);
+    if (!pipeline) {
+      ++prewarm_stats.failed;
+      continue;
+    }
+    pipelines.emplace(entry.hash, pipeline);
+    ++stats().pipelines_created;
+    last_pipeline_time = std::chrono::steady_clock::now();
+    ++prewarm_stats.created;
+    kept.push_back(entry);
+  }
+  // O que foi usado continua no arquivo (o prewarm desta execução não pode encolher o cache).
+  {
+    std::lock_guard<std::mutex> lock(prewarm_mutex);
+    for (prewarm::Entry& entry : kept) {
+      if (prewarm_entries.size() >= prewarm::kMaxEntries) break;
+      prewarm_entries.emplace(entry.hash, std::move(entry));
+    }
+    prewarm_entry_count.store(prewarm_entries.size(), std::memory_order_relaxed);
+  }
+  // A contagem de referência é a de pipelines prontos quando o jogo começa: o que passar disso foi
+  // compilado durante a gameplay (o número que o F2.5 quer ver zerado).
+  pipelines_at_prewarm = uint32_t(stats().pipelines_created);
+  return true;
+}
+
+void Renderer::Impl::SavePrewarmManifest() {
+  if (prewarm_path.empty() || !prewarm_stats.version) return;
+  prewarm::Manifest manifest;
+  manifest.version = prewarm_stats.version;
+  {
+    std::lock_guard<std::mutex> lock(prewarm_mutex);
+    if (prewarm_entries.empty()) return;
+    manifest.entries.reserve(prewarm_entries.size());
+    for (const auto& [hash, entry] : prewarm_entries) {
+      (void)hash;
+      manifest.entries.push_back(entry);
+    }
+  }
+  std::vector<uint8_t> bytes = prewarm::Serialize(manifest);
+  if (bytes.size() == prewarm_saved_size) return;
+  prewarm_saved_size = bytes.size();
+  prewarm_saved_count = manifest.entries.size();
+  last_prewarm_save = std::chrono::steady_clock::now();
+  prewarm_writing = true;
+  std::filesystem::path path = prewarm_path;
+  if (prewarm_writer.joinable()) {
+    prewarm_writer.join();
+  }
+  prewarm_writer = std::thread([this, bytes = std::move(bytes), path]() {
+    auto temporary = path;
+    temporary += ".tmp";
+    if (FILE* file = rex::filesystem::OpenFile(temporary, "wb")) {
+      bool written = fwrite(bytes.data(), bytes.size(), 1, file) == 1;
+      if (fclose(file) != 0) written = false;
+      if (written) {
+        std::error_code error;
+        std::filesystem::remove(path, error);
+        std::filesystem::rename(temporary, path, error);
+      }
+    }
+    prewarm_writing = false;
+  });
+}
 
 void Renderer::InitializeDriverCache(const std::filesystem::path& cache_root,
                                      uint32_t title_id) {
@@ -5447,16 +5708,23 @@ void Renderer::InitializeDriverCache(const std::filesystem::path& cache_root,
     return;
   }
   const auto& properties = im.device->properties();
-  im.driver_cache_path =
-      directory / fmt::format("native-{:08X}-{:08X}-{:08X}-{:08X}.cache", title_id,
-                              properties.vendorID, properties.deviceID, properties.driverVersion);
+  // F2.5: a versão do cache inclui os passes de shader ligados — trocar o spirv-opt ou a
+  // simplificação muda o SPIR-V que o driver compila, então o cache antigo não é reaproveitado.
+  const uint32_t cache_version = prewarm::CacheVersion(
+      REXCVAR_GET(gh3_native_spirv_opt), REXCVAR_GET(gh3_native_shader_simplify));
+  im.cache_version_ = cache_version;
+  im.driver_cache_path = directory / fmt::format("native-{:08X}-{:08X}-{:08X}-{:08X}-{:04X}.cache",
+                                                 title_id, properties.vendorID, properties.deviceID,
+                                                 properties.driverVersion, cache_version);
+  im.prewarm_path = directory / prewarm::CacheFileName(cache_version);
   // The newest complete file: the rename that replaces it can fail on Horizon
   // (it does not overwrite), leaving the data in .tmp.
-  std::vector<uint8_t> data = ReadDriverCache(im.driver_cache_path);
+  std::vector<uint8_t> data;
+  ReadDriverCache(im.driver_cache_path, cache_version, &data);
   auto temporary = im.driver_cache_path;
   temporary += ".tmp";
-  std::vector<uint8_t> newer = ReadDriverCache(temporary);
-  if (newer.size() > data.size()) {
+  std::vector<uint8_t> newer;
+  if (ReadDriverCache(temporary, cache_version, &newer) && newer.size() > data.size()) {
     data = std::move(newer);
   }
   VkPipelineCacheCreateInfo info = {};
@@ -5480,6 +5748,14 @@ void Renderer::InitializeDriverCache(const std::filesystem::path& cache_root,
   im.driver_cache_saved_size = data.size();
   REXLOG_INFO("[native] Driver pipeline cache: {} KB loaded from {}", data.size() >> 10,
               im.driver_cache_path.string());
+  // F2.5: recria os pipelines vistos na execução anterior antes de o jogo começar a desenhar.
+  im.PrewarmPipelines(cache_version);
+  const prewarm::Stats& stats = im.prewarm_stats;
+  if (!REXCVAR_GET(gh3_native_pipeline_prewarm)) {
+    REXLOG_INFO("[native] pipeline prewarm: off (gh3_native_pipeline_prewarm=false)");
+  } else {
+    REXLOG_INFO("[native] {}", stats.Line());
+  }
 }
 
 void Renderer::Impl::SaveDriverCache() {
@@ -5501,12 +5777,16 @@ void Renderer::Impl::SaveDriverCache() {
   if (driver_cache_writer.joinable()) {
     driver_cache_writer.join();
   }
+  SavePrewarmManifest();
+  if (prewarm_writer.joinable()) {
+    prewarm_writer.join();
+  }
   driver_cache_writer = std::thread([this, data, path]() {
     auto temporary = path;
     temporary += ".tmp";
     if (FILE* file = rex::filesystem::OpenFile(temporary, "wb")) {
-      const uint64_t header[] = {kDriverCacheMagic, uint64_t(data->size()),
-                                 XXH3_64bits(data->data(), data->size())};
+      const uint64_t header[] = {kDriverCacheMagic, uint64_t(cache_version_),
+                                 uint64_t(data->size()), XXH3_64bits(data->data(), data->size())};
       bool written = fwrite(header, sizeof(header), 1, file) == 1 &&
                      fwrite(data->data(), data->size(), 1, file) == 1;
       if (fclose(file) != 0) written = false;
@@ -5554,6 +5834,17 @@ std::string Renderer::TakeSpirvOptReport() {
   return fmt::format("spirv-opt: {} shaders, {:.1f}% fewer instructions ({} fallbacks)",
                      impl_->spirv_opt_stats.shaders, impl_->spirv_opt_stats.FewerPercent(),
                      impl_->spirv_opt_stats.fallbacks);
+}
+
+std::string Renderer::TakePrewarmReport() {
+  if (!impl_ || !impl_->prewarm_stats.version) {
+    return std::string();
+  }
+  const uint32_t created = uint32_t(impl_->stats().pipelines_created);
+  const uint32_t at_start = impl_->pipelines_at_prewarm;
+  const uint32_t after = created >= at_start ? created - at_start : 0;
+  return fmt::format("pipeline prewarm: {} at start ({} of {} from the cache), {} new since",
+                     at_start, impl_->prewarm_stats.created, impl_->prewarm_stats.loaded, after);
 }
 
 std::string Renderer::TakeShaderSimplifyReport() {

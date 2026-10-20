@@ -132,7 +132,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [x] T37: 60fps F2.4 — simplificar shaders (max(a,a), textureSize, branches)
   aceite: .venv/bin/python -m pytest -q tests/test_shader_simplify.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-simpl.png && python3 tools/image_stats.py out/parity/native-simpl.png --max-white 0.15 --min-stddev 20
   detalhe: pos-passe no SPIR-V traduzido; paridade. Plano F2.4.
-- [ ] T38: 60fps F2.5 — prewarm de pipelines + cache versionado
+- [x] T38: 60fps F2.5 — prewarm de pipelines + cache versionado
   aceite: .venv/bin/python -m pytest -q tests/test_pipeline_prewarm.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-prewarm.png && grep -q 'pipeline prewarm:' out/parity/native-prewarm.capture/game.log
   detalhe: evitar hitch de 59-160 ms/pipeline; log. Plano F2.5.
 - [ ] T39: 60fps F3.1 — instrumentar present/fence do presenter

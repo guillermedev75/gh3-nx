@@ -267,3 +267,10 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - pendente: NRO do Switch não rebuildado (T46); ganho real do F2.4 no aparelho só se o tradutor voltar a emitir os padrões (F5).
 - 2026-10-20 T37 (iter 1)
 - 2026-10-20 03:49 T37 ✅ aceita (iter 10)
+
+### T38 — tentativa 1
+- feito: `src/native/native_pipeline_prewarm.h` (puro: versão `(formato<<8)|passes`, arquivo `pipelines-<versão>.bin` com magic+versão+contagem+XXH3, `Parse` validado, dedupe, teto, linha de log) + `tests/test_pipeline_prewarm.py` (9, vermelhos antes). No renderer: `RecordPipeline` copia chave+microcódigo na 1ª vez que cada pipeline aparece; gravação em thread própria a cada 10 s e no `Shutdown`; `PrewarmPipelines` (em `InitializeDriverCache`, antes do guest) recria shaders/traduções/geometria/layout/pipelines; log `pipeline prewarm:` na inicialização e no relatório de 10 s (`N at start ..., M new since`); cvar `gh3_native_pipeline_prewarm` (true). Cache do **driver** também versionado (nome + cabeçalho `{magic, versão, tamanho, hash}`).
+- medido: aceite exit 0; captura white=0,014 stddev=55,4; 121 de 121 pipelines recriados em ~1,0 s de boot (Mac, cache do driver quente) e **0 pipelines novos** em toda a captura (`0 new since` nos 9 relatórios); suíte 246 passed; `check_no_game_content` limpo.
+- decisões (e por quê): gravar o microcódigo (não o SPIR-V) porque o `LoadShader` do jogo reusa o shader pelo hash e a tradução continua num thread só (o init roda antes dos workers usarem o tradutor); o microcódigo fica no byte order do host (como o `Shader` do SDK), então o hash da chave (do guest) não confere por XXH3 — a integridade é o hash do corpo do arquivo. Arquivo é cache local da máquina (`~/.local/share/gh3/cache/shaders/driver`), como o cache do driver: nunca vai ao repo/SD. Gravação periódica porque o capture encerra por SIGTERM (sem `Shutdown`).
+- pendente: NRO do Switch não rebuildado (T46); custo do prewarm no boot do Switch e o "zero new since" na mesma música ficam para a F5 (o manifesto é a união das telas vistas: a 1ª execução grava, a 2ª já zera).
+- 2026-10-20 04:07 T38 ✅ aceita (iter 11)
