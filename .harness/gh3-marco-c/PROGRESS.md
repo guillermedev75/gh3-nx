@@ -290,3 +290,9 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - pendente: medir no Switch (F5, junto com a linha do F3.1); NRO não rebuildado (T46).
 - 2026-10-20 04:28 T40 ✅ aceita (iter 13)
 - 2026-10-20 04:33 T40 ✅ aceita (iter 13)
+
+### T41 — tentativa 1
+- feito: adotei o wip de 3185994 (header puro `native_resolve_ownership.h` + `BindBorrowedDepth` + `content_address`/restore/`gh3_native_resolve_swap`) e conferi: `test_resolve_ownership.py` 11 passed, suíte 272 passed, aceite completo exit 0 (captura white=0,012 stddev=53,5 mean=94,9, sem branco). Playbook §8/F3.3 documentado.
+- decisões (e por quê): semântica conservadora já fixada nos testes (alvo mais alto que o resolve, ex. 1280x2048→720, continua cópia); cor fora até a paridade. Cvar segue false por padrão e fora do `switch/gh3.toml`: na captura **nenhum** handoff acontece (todos os resolves recusados por `not the whole target`), então ligar no Switch só arriscaria paridade sem ganho medido.
+- pendente: exercitar handoff/restore num alvo de profundidade integral — exigiria reduzir a alocação 1x à `known_1x_height` (tarefa à parte); medir no Switch na F5.
+- 2026-10-20 05:04 T41 ✅ aceita (iter 1)

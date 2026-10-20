@@ -141,7 +141,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [x] T40: 60fps F3.2 — present ring 3 output slots (se 3.1 justificar)
   aceite: .venv/bin/python -m pytest -q tests/test_present_ring.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-ring.png && python3 tools/image_stats.py out/parity/native-ring.png --max-white 0.15 --min-stddev 20 && grep -q 'present ring:' out/parity/native-ring.capture/game.log
   detalhe: 3 slots, 1 submit/frame, IMMEDIATE no Switch; nunca 4o work slot. Plano F3.2.
-- [ ] T41: 60fps F3.3 — resolve sem copia (depth/lazy) com restauracao
+- [x] T41: 60fps F3.3 — resolve sem copia (depth/lazy) com restauracao
   aceite: .venv/bin/python -m pytest -q tests/test_resolve_ownership.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-resolve.png -- --gh3_native_resolve_swap=true && python3 tools/image_stats.py out/parity/native-resolve.png --max-white 0.15 --min-stddev 20
   detalhe: so quando o alvo inteiro for resolvido; restaurar conteudo; cor de fora ate paridade. Plano F3.3.
 - [ ] T42: 60fps F4.1 — caches do ring (IM_LOAD, sampler, query, zero log)

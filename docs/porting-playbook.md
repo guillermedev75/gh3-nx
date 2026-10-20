@@ -541,3 +541,32 @@ submissão do slot reutilizado (`current - 3`), não todas.
   do F3.1 em 0-2 esperas por janela de 10 s, **não há o que ganhar** com outro anel aqui; o quarto
   slot/thread de apresentação continuam proibidos. A confirmação no Switch (IMMEDIATE/Wait do anel)
   fica para a F5, como no F3.1.
+
+### F3.3 — resolve de profundidade sem cópia, com restauração (2026-10-20)
+
+Na 360 um resolve de profundidade não é cópia: a textura resolvida e o render target são duas vistas da
+mesma EDRAM. O F3.3 reproduz isso só quando é seguro: **alvo de profundidade inteiro**, 1 amostra,
+destino do mesmo tamanho e formato, e o jogo amostrando o resolve como profundidade (não como as words
+de memória).
+
+- **`src/native/native_resolve_ownership.h`** (puro, sem Vulkan, testado com `c++`): `Decide()` devolve
+  `handoff` (destino fica com a imagem), `restore first` (o conteúdo já está num destino: copia de volta
+  antes), ou o motivo da recusa (`not depth`, `multisampled`, `not the whole target`, `size/format
+  mismatch`); `RestoreBeforeWrite()` dispensa o restore quando o clear cobre o alvo inteiro; `Stats`/
+  `Format()` produzem a linha `[native] resolve ownership: N without copy (X MB), M restores (Y MB),
+  K copied (declined: motivo:conta)`.
+- **`native_textures.cpp`**: `BindBorrowedDepth()` registra a imagem do alvo como destino de resolve no
+  endereço do guest (sem copiar), com view de **aspecto depth**; `ResolveDestination.depth` separa esses
+  destinos do `R32_SFLOAT` que já existia para leitura de memória (o `CopyToSized` de profundidade vai
+  por `vkCmdCopyImage`; o compute de cópia é só de cor).
+- **`native_renderer.cpp`**: `gh3_native_resolve_swap` (padrão false). No handoff o alvo ganha uma
+  imagem nova (limpa em 1.0) e guarda `content_address`; `RestoreTargetContent()` traz o conteúdo de
+  volta com `vkCmdCopyImage` antes de o alvo ser lido (resolve) ou escrito sem clear (passes com load,
+  clears parciais). Cor fica de fora até a paridade (o jogo reusa alvos de cor sem limpar).
+- **Medido no Mac (captura T41)**: **zero handoffs** — 276-9825 resolves de profundidade por janela de
+  10 s, todos recusados como `not the whole target`: o alvo de profundidade da cena é 1280x2048 e o
+  resolve cobre 1280x720; o mapa de sombra resolve 1024 de um alvo de 1040; os RTTs têm altura alinhada
+  a 16 (320x192 com resolve de 184). Ou seja, no GH3 de hoje o caminho antigo (cópia) continua sendo o
+  único exercitado, e a paridade é a de antes. O F3.3 é uma guarda para quando o alvo inteiro for
+  resolvido; para render ganho real no GH3 seria preciso reduzir a alocação do alvo 1x de profundidade
+  à altura usada (`known_1x_height`) — tarefa à parte, com risco no reuso do alvo.
