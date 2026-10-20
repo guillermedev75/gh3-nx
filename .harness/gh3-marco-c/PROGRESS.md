@@ -224,3 +224,10 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - pendente: medir no Switch (F5): a recriação dos alvos custa um quadro longo (~300 ms no pior caso no Mac), então o piso 0.65 deve ser o ponto de partida.
 - 2026-10-20 01:45 T31 ✅ aceita (iter 1)
 - 2026-10-20 01:47 T31 ✅ aceita (iter 4)
+
+### T32 — tentativa 1
+- feito: `src/native/native_scene_cas.h` (puro: sharpness pós-setup `-1/(8-3s)`, retângulo NDC, ratio, formato; static_assert dos offsets dos push constants) + `tests/test_scene_cas.py` (7). No `native_renderer.cpp`: cvars `gh3_native_scene_cas` (false) / `_sharpness` (0.2), pipeline CAS por formato (VS de retângulo + PS de resample do próprio SDK, `sdk/src/ui/shaders/vulkan_spirv`), `CasUpscale` chamado no upscale do `SyncSceneTarget` (downscale/depth/outro formato seguem LINEAR), reset dos binds/dynamic state após o passe; include paths no CMake host e Switch; `switch/gh3.toml` com CAS ligado; playbook §8/F1.1c.
+- decisões (e por quê): reaproveitar o SPIR-V de CAS que o SDK já usa no presenter (sem gerar/compilar shader e sem dependência nova); só o upscale usa CAS, porque CAS não faz downsample útil e profundidade não é cor; descriptor set por submissão via `AllocateSet` (mesmo padrão do copy de profundidade, sem corrida entre frames).
+- verificado: aceite exit 0 (7 testes; captura 0.65+CAS white=0,001 stddev=50,3; log `scene CAS: enabled` e `upscaling 832x468 -> 1280x720`); suíte completa 203 passed; build Mac ok.
+- pendente: custo de GPU/nitidez no Switch (F5); NRO não rebuildado (T46). Medição de FPS não faz sentido no Mac (GPU não é o limite); registrado em "Métricas em aberto" do vault.
+- 2026-10-20 02:02 T32 ✅ aceita (iter 5)

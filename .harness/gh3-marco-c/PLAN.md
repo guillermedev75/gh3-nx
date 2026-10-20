@@ -114,7 +114,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [x] T31: 60fps F1.1b — controlador dinamico de resolucao 0.65-1.0 (alvo 16.7 ms)
   aceite: .venv/bin/python -m pytest -q tests/test_scene_dynamic.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-dyn.png -- --gh3_native_scene_scale=0.65 --gh3_native_scene_dynamic=true && python3 tools/image_stats.py out/parity/native-dyn.png --max-white 0.15 --min-stddev 20 && grep -q 'scene dynamic:' out/parity/native-dyn.capture/game.log
   detalhe: controlador puro (histerese 2-3 frames, passos 0.05, 0.5-1 s no nivel), alvo 16.7 ms; recriar alvos scene_scaled preservando conteudo; log. Plano F1.1b.
-- [ ] T32: 60fps F1.1c — CAS no blit da cena escalada
+- [x] T32: 60fps F1.1c — CAS no blit da cena escalada
   aceite: .venv/bin/python -m pytest -q tests/test_scene_cas.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-cas.png -- --gh3_native_scene_scale=0.65 --gh3_native_scene_cas=true && python3 tools/image_stats.py out/parity/native-cas.png --max-white 0.15 --min-stddev 20 && grep -q 'scene CAS' out/parity/native-cas.capture/game.log
   detalhe: sharpening/CAS no blit (o blit atual e' LINEAR); teste/captura. Plano F1.1c.
 - [ ] T33: 60fps F1.4 — auditoria de formatos: 16F sem HDR, gamma, depth24, 64bpp

@@ -288,3 +288,24 @@ e 1.0 em passos de 0.05 (`src/native/native_scene_dynamic.h`, puro, testado sem 
   script, cada passo com o tamanho novo (ex. `scene scale 0.65: 832x468`); captura a 0.65
   white=0,001 stddev=53,1. A recriação dos alvos custa um quadro longo (~300 ms no pior caso), então
   no Switch o controlador deve começar no piso (0.65) e só subir se sobrar orçamento.
+
+### F1.1c — CAS no upscale da cena escalada (2026-10-20)
+
+`--gh3_native_scene_cas=true` (cvar `gh3_native_scene_cas`, padrão false no código e true no
+`switch/gh3.toml`; `gh3_native_scene_cas_sharpness`, padrão 0.2) troca o `vkCmdBlitImage` LINEAR que sobe
+a imagem escalada do T16 pelo **CAS do FidelityFX** que o próprio SDK já usa no presenter:
+
+- O shader é o SPIR-V pré-compilado `guest_output_ffx_cas_resample_ps` (mais o VS de retângulo
+  `guest_output_triangle_strip_rect_vs`) de `sdk/src/ui/shaders/vulkan_spirv/`, incluído pelo build do
+  Mac e do Switch; nada novo para compilar nem dependência nova.
+- A parte pura (`src/native/native_scene_cas.h`, testada sem SDK) calcula o valor pós-setup
+  `-1/(8-3*sharpness)`, o retângulo em NDC e a proporção origem/destino; os `static_assert` amarram os
+  offsets dos push constants aos do SPIR-V (retângulo 0-15, output_offset 16, ratio 24, sharpness 32).
+- Só o **upscale** (imagem escalada → alvo cheio) usa CAS; descer para a imagem escalada, profundidade e
+  formato diferente de `R8G8B8A8_UNORM` continuam no blit LINEAR. Se a pipeline falhar, cai no LINEAR.
+- Depois do CAS o renderer esquece `bound_pipeline`/`bound_layout`/`bound_viewport`/`bound_scissor`; sem
+  isso o próximo draw do jogo acharia que o estado dele já estava ligado e herdaria o do CAS.
+- Log: `[native] scene CAS: enabled (sharpness ...)` ao iniciar e
+  `[native] scene CAS: upscaling 832x468 -> 1280x720 (ratio 0.65)` na primeira subida.
+- Captura no Mac a 0.65: white=0,001 stddev≈50-53 (mesma faixa do LINEAR); o ganho é nitidez, não
+  brilho/paridade de cor. Comparação visual e custo de GPU no Switch ficam para a F5.

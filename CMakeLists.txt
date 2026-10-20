@@ -99,10 +99,11 @@ if(GH3_NATIVE_RENDERER)
         "${GH3_SDK_SRC}/thirdparty/glslang")
     target_compile_options(gh3_gpu_xenos PRIVATE -Wno-unused-variable)
     target_link_libraries(gh3_gpu_xenos PRIVATE rex::runtime rex::xxhash)
-    # O SPIR-V pré-compilado do SDK (shader de gamma do swap) e o builder de SPIR-V do glslang, que os
-    # headers do tradutor incluem.
+    # O SPIR-V pré-compilado do SDK (shader de gamma do swap, CAS da cena no T32) e o builder de SPIR-V
+    # do glslang, que os headers do tradutor incluem.
     target_include_directories(gh3 PRIVATE
         "${GH3_SDK_SRC}/src/graphics"
+        "${GH3_SDK_SRC}/src/ui/shaders/vulkan_spirv"
         "${GH3_SDK_SRC}/thirdparty/glslang")
     target_compile_definitions(gh3 PRIVATE GH3_NATIVE_RENDERER=1)
     target_link_libraries(gh3 PRIVATE gh3_gpu_xenos rex::xxhash

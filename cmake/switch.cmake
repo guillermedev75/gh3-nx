@@ -55,8 +55,9 @@ target_include_directories(gh3 PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${GH3_GENERATED_DIR}"
     "${REXSDK_DIR}/thirdparty/imgui"
-    # O SPIR-V pré-compilado do SDK (shader de gamma do swap).
+    # O SPIR-V pré-compilado do SDK (shader de gamma do swap, CAS da cena no T32).
     "${REXSDK_DIR}/src/graphics"
+    "${REXSDK_DIR}/src/ui/shaders/vulkan_spirv"
     # O builder de SPIR-V do glslang, que os headers do tradutor incluem.
     "${REXSDK_DIR}/thirdparty/glslang")
 target_compile_definitions(gh3 PRIVATE GH3_NATIVE_RENDERER=1)

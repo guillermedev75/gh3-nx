@@ -43,6 +43,10 @@ gh3_native_scene_scale = 0.65
 # Controlador dinâmico 0.65-1.0 em passos de 0.05 para caber em 16.7 ms (histerese de 3 quadros e 0.6 s
 # no mesmo nível; src/native/native_scene_dynamic.h). A escala acima é só o ponto de partida.
 gh3_native_scene_dynamic = true
+# CAS (FidelityFX) no blit que sobe a cena escalada para 1280x720, no lugar do LINEAR (T32): compensa o
+# borrão de renderizar a 0.65. Só atua com o alvo de cor R8G8B8A8_UNORM; o resto continua LINEAR.
+gh3_native_scene_cas = true
+gh3_native_scene_cas_sharpness = 0.2
 # Loga a contagem de cedências a cada 4096. Diagnóstico.
 gh3_guest_waits_stats = false
 

@@ -64,6 +64,14 @@ extern "C" {
 #include "native_invisible.h"
 #include "native_scene_scale.h"
 #include "native_scene_dynamic.h"
+#include "native_scene_cas.h"
+
+// T32: o SPIR-V que o próprio SDK usa no presenter para CAS (FidelityFX), reaproveitado no blit que
+// sobe a cena escalada. O VS desenha o retângulo em NDC e o PS lê 9 texels e aplica o CAS.
+namespace shaders {
+#include <guest_output_ffx_cas_resample_ps.h>
+#include <guest_output_triangle_strip_rect_vs.h>
+}  // namespace shaders
 #include "native_primitive_expand.h"
 #include "native_hash.h"
 #include "native_textures.h"
@@ -97,6 +105,13 @@ REXCVAR_DEFINE_BOOL(gh3_native_scene_dynamic, false, "GH3",
                     "Controlador dinamico da escala da cena (T31): mede o intervalo entre swaps e sobe/desce "
                     "a escala do gh3_native_scene_scale em passos de 0.05 entre 0.65 e 1.0 para caber em "
                     "16.7 ms, com histerese de 3 quadros e 0.6 s no mesmo nivel. false = escala fixa");
+REXCVAR_DEFINE_BOOL(gh3_native_scene_cas, false, "GH3",
+                    "CAS (FidelityFX Contrast Adaptive Sharpening) no blit que sobe a cena escalada "
+                    "para o alvo cheio, em vez do vkCmdBlitImage LINEAR (T32). Só vale com "
+                    "gh3_native_scene_scale < 1 e alvo de cor R8G8B8A8_UNORM; o resto continua LINEAR");
+REXCVAR_DEFINE_DOUBLE(gh3_native_scene_cas_sharpness, 0.2, "GH3",
+                      "Sharpen do CAS no upscale da cena, 0-1 (0 desliga; o shader recebe o valor "
+                      "pós-setup do FidelityFX)");
 REXCVAR_DEFINE_BOOL(gh3_native_skip_shadows, false, "GH3",
                     "Experimento de FPS: pula os draws do mapa de sombra (alvo cor base 0, pitch 160); "
                     "a sombra fica com o conteudo do frame anterior");
@@ -451,6 +466,19 @@ struct Renderer::Impl {
   uint64_t scene_clock = 0;
   // T31: controlador dinâmico (gh3_native_scene_dynamic); ausente = escala fixa.
   std::unique_ptr<scene::DynamicScale> scene_dynamic;
+  // T32: CAS no upscale da cena (gh3_native_scene_cas). Pipeline por formato do alvo; o descriptor
+  // set é alocado por submissão (AllocateSet), como o copy de profundidade.
+  bool scene_cas = false;
+  float scene_cas_sharpness = 0.0f;
+  VkDescriptorSetLayout scene_cas_set_layout = VK_NULL_HANDLE;
+  VkPipelineLayout scene_cas_layout = VK_NULL_HANDLE;
+  struct SceneCasPipeline {
+    VkFormat format;
+    VkPipeline pipeline;
+  };
+  std::vector<SceneCasPipeline> scene_cas_pipelines;
+  bool scene_cas_failed = false;
+  bool scene_cas_logged = false;
   // gh3_native_alias_cap (ver o cvar).
   bool alias_cap = true;
   // gh3_native_zcull (ver o cvar).
@@ -1437,6 +1465,9 @@ struct Renderer::Impl {
   void SyncSceneTarget(RenderTarget* target);
   void BlitTarget(RenderTarget* source, RenderTarget* target, int32_t src_w, int32_t src_h,
                   int32_t dst_w, int32_t dst_h, VkFilter filter);
+  // T32: CAS no lugar do blit LINEAR ao subir a cena escalada; false = usa o blit.
+  bool EnsureSceneCas(VkFormat format);
+  bool CasUpscale(RenderTarget* source, RenderTarget* target, const scene::SceneBlit& extent);
   void EndPass() {
     if (in_pass) {
       dfn().vkCmdEndRendering(cmd());
@@ -1492,6 +1523,16 @@ bool Renderer::Impl::Initialize() {
                 "hold {:.2f} s, start {:g}",
                 double(c.min_level) / 20.0, double(c.max_level) / 20.0, c.target_ms,
                 double(c.step_levels) / 20.0, c.hold_s, scene_scale);
+  }
+  scene_cas_sharpness = scene::ClampCasSharpness(float(REXCVAR_GET(gh3_native_scene_cas_sharpness)));
+  scene_cas = scene::CasEnabled(REXCVAR_GET(gh3_native_scene_cas), scene_cas_sharpness);
+  if (scene_cas) {
+    REXLOG_INFO("[native] scene CAS: enabled (sharpness {:.2f}, setup {:g}) on the upscale of the "
+                "scaled scene; LINEAR elsewhere",
+                scene_cas_sharpness, scene::CasSetupSharpness(scene_cas_sharpness));
+    if (!scene::Enabled(scene_scale)) {
+      REXLOG_WARN("[native] scene CAS: has no effect while gh3_native_scene_scale is 1.0");
+    }
   }
   alias_cap = REXCVAR_GET(gh3_native_alias_cap);
   zcull = REXCVAR_GET(gh3_native_zcull);
@@ -2120,6 +2161,14 @@ void Renderer::Impl::Shutdown() {
     dfn().vkFreeMemory(vk, retired.memory, nullptr);
   }
   retired_render_targets.clear();
+  for (SceneCasPipeline& cached : scene_cas_pipelines) {
+    if (cached.pipeline) dfn().vkDestroyPipeline(vk, cached.pipeline, nullptr);
+  }
+  scene_cas_pipelines.clear();
+  if (scene_cas_layout) dfn().vkDestroyPipelineLayout(vk, scene_cas_layout, nullptr);
+  if (scene_cas_set_layout) {
+    dfn().vkDestroyDescriptorSetLayout(vk, scene_cas_set_layout, nullptr);
+  }
   if (depth_convert_pipeline) dfn().vkDestroyPipeline(vk, depth_convert_pipeline, nullptr);
   if (depth_convert_layout) dfn().vkDestroyPipelineLayout(vk, depth_convert_layout, nullptr);
   if (depth_copy_pipeline) dfn().vkDestroyPipeline(vk, depth_copy_pipeline, nullptr);
@@ -2644,6 +2693,204 @@ void Renderer::Impl::BlitTarget(RenderTarget* source, RenderTarget* target, int3
                              1, &after, 0, nullptr, 0, nullptr);
 }
 
+// T32: pipeline de CAS por formato do alvo. Criado na primeira subida da cena; se falhar, o blit
+// LINEAR continua valendo (não derruba nada). O descriptor set vem do AllocateSet por submissão.
+bool Renderer::Impl::EnsureSceneCas(VkFormat format) {
+  for (const SceneCasPipeline& cached : scene_cas_pipelines) {
+    if (cached.format == format) return cached.pipeline != VK_NULL_HANDLE;
+  }
+  if (scene_cas_failed) return false;
+  if (!scene_cas_set_layout) {
+    VkDescriptorSetLayoutBinding binding = {};
+    binding.binding = 0;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    binding.descriptorCount = 1;
+    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo layout_info = {};
+    layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layout_info.bindingCount = 1;
+    layout_info.pBindings = &binding;
+    if (dfn().vkCreateDescriptorSetLayout(vk, &layout_info, nullptr, &scene_cas_set_layout) !=
+        VK_SUCCESS) {
+      scene_cas_failed = true;
+      return false;
+    }
+    VkPushConstantRange ranges[2] = {
+        {VK_SHADER_STAGE_VERTEX_BIT, 0, uint32_t(sizeof(scene::CasRect))},
+        {VK_SHADER_STAGE_FRAGMENT_BIT, uint32_t(sizeof(scene::CasRect)),
+         uint32_t(sizeof(scene::CasEffect))},
+    };
+    VkPipelineLayoutCreateInfo pipeline_layout = {};
+    pipeline_layout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipeline_layout.setLayoutCount = 1;
+    pipeline_layout.pSetLayouts = &scene_cas_set_layout;
+    pipeline_layout.pushConstantRangeCount = uint32_t(std::size(ranges));
+    pipeline_layout.pPushConstantRanges = ranges;
+    if (dfn().vkCreatePipelineLayout(vk, &pipeline_layout, nullptr, &scene_cas_layout) !=
+        VK_SUCCESS) {
+      scene_cas_failed = true;
+      return false;
+    }
+  }
+  VkShaderModule modules[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
+  VkShaderModuleCreateInfo module_info = {};
+  module_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  module_info.codeSize = sizeof(::shaders::guest_output_triangle_strip_rect_vs);
+  module_info.pCode = ::shaders::guest_output_triangle_strip_rect_vs;
+  bool ok = dfn().vkCreateShaderModule(vk, &module_info, nullptr, &modules[0]) == VK_SUCCESS;
+  module_info.codeSize = sizeof(::shaders::guest_output_ffx_cas_resample_ps);
+  module_info.pCode = ::shaders::guest_output_ffx_cas_resample_ps;
+  ok = ok && dfn().vkCreateShaderModule(vk, &module_info, nullptr, &modules[1]) == VK_SUCCESS;
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  if (ok) {
+    VkPipelineShaderStageCreateInfo stages[2] = {};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = modules[0];
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = modules[1];
+    stages[1].pName = "main";
+    VkPipelineVertexInputStateCreateInfo vertex_input = {};
+    vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    VkPipelineInputAssemblyStateCreateInfo input_assembly = {};
+    input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    // O VS gera (0,0),(1,0),(0,1),(1,1) a partir do gl_VertexIndex.
+    input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    VkPipelineViewportStateCreateInfo viewport_state = {};
+    viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewport_state.viewportCount = 1;
+    viewport_state.scissorCount = 1;
+    VkPipelineRasterizationStateCreateInfo raster = {};
+    raster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    raster.polygonMode = VK_POLYGON_MODE_FILL;
+    raster.cullMode = VK_CULL_MODE_NONE;
+    raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    raster.lineWidth = 1.0f;
+    VkPipelineMultisampleStateCreateInfo multisample_state = {};
+    multisample_state.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisample_state.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineColorBlendAttachmentState attachment = {};
+    attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo blend = {};
+    blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    blend.attachmentCount = 1;
+    blend.pAttachments = &attachment;
+    VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamic = {};
+    dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamic.dynamicStateCount = uint32_t(std::size(dynamic_states));
+    dynamic.pDynamicStates = dynamic_states;
+    VkPipelineRenderingCreateInfo rendering = {};
+    rendering.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+    rendering.colorAttachmentCount = 1;
+    rendering.pColorAttachmentFormats = &format;
+    VkGraphicsPipelineCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    info.pNext = &rendering;
+    info.stageCount = 2;
+    info.pStages = stages;
+    info.pVertexInputState = &vertex_input;
+    info.pInputAssemblyState = &input_assembly;
+    info.pViewportState = &viewport_state;
+    info.pRasterizationState = &raster;
+    info.pMultisampleState = &multisample_state;
+    info.pColorBlendState = &blend;
+    info.pDynamicState = &dynamic;
+    info.layout = scene_cas_layout;
+    ok = dfn().vkCreateGraphicsPipelines(vk, driver_cache, 1, &info, nullptr, &pipeline) ==
+         VK_SUCCESS;
+  }
+  for (VkShaderModule module : modules) {
+    if (module) dfn().vkDestroyShaderModule(vk, module, nullptr);
+  }
+  if (!ok) {
+    REXLOG_WARN("[native] scene CAS: pipeline creation failed; the upscale stays LINEAR");
+    scene_cas_failed = true;
+    return false;
+  }
+  scene_cas_pipelines.push_back({format, pipeline});
+  return true;
+}
+
+bool Renderer::Impl::CasUpscale(RenderTarget* source, RenderTarget* target,
+                                const scene::SceneBlit& extent) {
+  if (!source || !target) return false;
+  scene::CasParams params =
+      scene::CasFor(extent.scaled_w, extent.scaled_h, extent.full_w, extent.full_h, target->width,
+                    target->height, scene_cas_sharpness);
+  if (!params.valid || !EnsureSceneCas(target->format)) return false;
+  BeginRecording();
+  EndPass();
+  VkCommandBuffer c = cmd();
+  VkDescriptorSet set = AllocateSet(scene_cas_set_layout);
+  if (!set) return false;
+  VkDescriptorImageInfo image = {VK_NULL_HANDLE, source->view, VK_IMAGE_LAYOUT_GENERAL};
+  VkWriteDescriptorSet write = {};
+  write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  write.dstSet = set;
+  write.dstBinding = 0;
+  write.descriptorCount = 1;
+  write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+  write.pImageInfo = &image;
+  dfn().vkUpdateDescriptorSets(vk, 1, &write, 0, nullptr);
+  VkMemoryBarrier before = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
+                            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                                VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+                            VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT};
+  dfn().vkCmdPipelineBarrier(c, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                                 VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             0, 1, &before, 0, nullptr, 0, nullptr);
+  PassTargets targets;
+  targets.color[0] = target;
+  if (!BeginPass(targets, params.height)) return false;
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  for (const SceneCasPipeline& cached : scene_cas_pipelines) {
+    if (cached.format == target->format) pipeline = cached.pipeline;
+  }
+  VkViewport viewport = {0.0f, 0.0f, float(target->width), float(target->height), 0.0f, 1.0f};
+  VkRect2D scissor = {{0, 0}, {params.width, params.height}};
+  dfn().vkCmdBindPipeline(c, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+  dfn().vkCmdBindDescriptorSets(c, VK_PIPELINE_BIND_POINT_GRAPHICS, scene_cas_layout, 0, 1, &set, 0,
+                                nullptr);
+  dfn().vkCmdPushConstants(c, scene_cas_layout,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                           uint32_t(sizeof(params.push)), &params.push);
+  dfn().vkCmdSetViewport(c, 0, 1, &viewport);
+  dfn().vkCmdSetScissor(c, 0, 1, &scissor);
+  dfn().vkCmdDraw(c, 4, 1, 0, 0);
+  EndPass();
+  // O CAS mexeu no estado dinâmico e nos binds que o caminho dos draws guarda como "já ligados":
+  // esquecer tudo força o próximo draw do jogo a religar o que é dele.
+  bound_pipeline = VK_NULL_HANDLE;
+  bound_layout = VK_NULL_HANDLE;
+  bound_static_sets = false;
+  bound_viewport = {};
+  bound_scissor = {};
+  VkMemoryBarrier after = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
+                           VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                           VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT |
+                               VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                               VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                               VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                               VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                               VK_ACCESS_SHADER_WRITE_BIT};
+  dfn().vkCmdPipelineBarrier(c, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &after, 0, nullptr, 0,
+                             nullptr);
+  if (!scene_cas_logged) {
+    scene_cas_logged = true;
+    REXLOG_INFO("[native] scene CAS: upscaling {}x{} -> {}x{} (ratio {:g})", extent.scaled_w,
+                extent.scaled_h, extent.full_w, extent.full_h,
+                double(params.push.effect.input_output_ratio[0]));
+  }
+  return true;
+}
+
 // T16: o par alvo cheio F / imagem escalada S da cena. F acessado (HUD, resolve, limpeza) traz antes o
 // que S desenhou desde então (blit para cima); S usada para desenhar traz antes o que F recebeu (blit
 // para baixo: a limpeza do palco, por exemplo). Cada lado só absorve o que o outro tem de novo.
@@ -2668,8 +2915,13 @@ void Renderer::Impl::SyncSceneTarget(RenderTarget* target) {
       target->scene_seen = newer;
       if (e.valid) {
         if (scaled) {
+          // Descer para a imagem escalada (a limpeza do palco, por exemplo) continua LINEAR.
           BlitTarget(full, small, int32_t(e.full_w), int32_t(e.full_h), int32_t(e.scaled_w),
                      int32_t(e.scaled_h), filter);
+        } else if (scene::CasCompatible(scene_cas, full->key.is_depth != 0, small->format,
+                                        full->format) &&
+                   CasUpscale(small, full, e)) {
+          // T32: subiu com CAS.
         } else {
           BlitTarget(small, full, int32_t(e.scaled_w), int32_t(e.scaled_h), int32_t(e.full_w),
                      int32_t(e.full_h), filter);
