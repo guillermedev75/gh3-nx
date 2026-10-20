@@ -150,7 +150,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [x] T43: 60fps F4.2 — function ordering + non_volatile_as_local + A/B -O2
   aceite: .venv/bin/python -m pytest -q tests/test_function_order.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-order.png && python3 tools/image_stats.py out/parity/native-order.png --max-white 0.15 --min-stddev 20
   detalhe: _start=0; boot; A/B. Plano F4.2.
-- [ ] T44: 60fps F4.3 — PGO representativo (build com o perfil existente)
+- [x] T44: 60fps F4.3 — PGO representativo (build com o perfil existente)
   aceite: .venv/bin/python -m pytest -q tests/test_pgo.py && test -f out/pgo/CMakeFiles#gh3.dir#src#main.cpp.gcda
   detalhe: perfil em out/pgo; build GH3_PGO=usar; um perfil novo exige o Switch (humano). Plano F4.3.
 - [!] T45: 60fps F4.4 — funcoes quentes em C++/NEON (condicional)

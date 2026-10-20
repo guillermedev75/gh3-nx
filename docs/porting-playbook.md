@@ -636,3 +636,31 @@ nfsmw-nx resolve com `--section-ordering-file` (`app/orden_funciones.ld`, ver `d
   assembly sem seção por função: entra pelo arquivo, `*libc.a:libc_a-memcpy.o(.text .text.*)`, como
   no nfsmw). Testes: `tests/test_function_order.py` (sem GPU). No Mac a captura não muda (a
   ordenação só afeta o link do NRO); a captura de aceite deu white=0,003, stddev 46,1.
+
+### F4.3 — PGO com o perfil existente (2026-10-20)
+
+O perfil de `out/pgo` (151 `.gcda`, 3,1 MiB) foi gravado no Switch em **2026-10-18** pelo build
+`GH3_PGO=gerar` (o caminho de gravação/uso, `src/pgo.cpp` + `cmake/switch.cmake`, já existia e é
+travado por `tests/test_pgo.py`). O **T44** é o build de uso — nenhum código mudou.
+
+- **Build**: `-DGH3_PGO=usar` no configure do Docker + `cmake --build build/switch -j 6` → exit 0
+  em **408 s**. O `build.ninja` mostra `-fprofile-use=/project/out/pgo` (com
+  `-fprofile-partial-training -fprofile-correction`) em `gh3_recomp` **e** `gh3`.
+- **Código traduzido (o quente) casa com o perfil**: `generated/default/*.cpp` e `src/main.cpp`
+  compilam **sem** `-Wcoverage-mismatch`; o perfil foi gravado depois do T12, então o codegen é o
+  mesmo. `-fprofile-report` num TU (`-o /tmp/…` com a linha do `build.ninja`) imprime
+  `Profile consistency report` com os passes `profile`/`feedback_fnsplit` e **0 mismatch**.
+- **Lado do app ficou velho**: `native_renderer.cpp` (78), `native_textures.cpp` (49),
+  `gh3_native_system.cpp` (44) e headers dão **196 avisos** `-Wcoverage-mismatch` — os arquivos
+  mudaram entre a gravação e o T43. O build já usa `-Wno-missing-profile
+  -Wno-error=coverage-mismatch -fprofile-correction`: o GCC aproveita o que casa e ignora o resto.
+  Para o PGO valer em todos os TUs é preciso **regravar o perfil no Switch** (F5, humano).
+- **O binário de uso não é instrumentado**: `nm build/switch/gh3 | grep -ci gcov` = 0 e
+  `strings | grep -c 'sdmc:/switch/gh3-nx/pgo'` = 0 (só o build de gravação compila `src/pgo.cpp`);
+  os `.gcda` ficam intactos (mtime 2026-10-18 02:57).
+- **Tamanho** (mesmo fonte, comparado ao build do T43 com PGO desligado): `gh3` 94.929.176 →
+  **95.384.360 B** (+0,48%), NRO 64.568.390 → **65.031.238 B** (+0,72%) — o perfil muda
+  inlining/alinhamento do LTO. `_start` continua `0x0` e `tools/check_nro.py` dá
+  `NRO OK: 0x3df9000 bytes` (com asset section).
+- **FPS**: não medido aqui (só no aparelho). A tabela do §8 já registra PGO ~31 → ~25/~21 ms
+  **sem ganho visível**; o valor é CPU do jogo, que ainda não é o limite no Switch.

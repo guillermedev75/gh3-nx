@@ -311,3 +311,10 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - verificado: aceite exit 0 (`test_function_order.py` 10 passed; captura nativa white=0,003 stddev=46,1 mean=84,6); suíte **292 passed**; Docker relink do NRO: `_start`=0x0, `sub_824D0070` 0x695f90→0x130, `sub_8272C7C0` 0x1a89600→0x410, `svcSleepThread`→0x3b64, `memcpy/memmove` 0x2d21880→0x3c80; `GH3_RECOMP_O2=ON` confere `-O2` no `build.ninja`.
 - pendente: A/B real de −O2 só no aparelho (F5); lista completa de quentes exige guardar o ELF do build do perfil (F5); NRO não rebuildado para entrega (T46).
 - 2026-10-20 06:12 T43 ✅ aceita (iter 3)
+
+### T44 — tentativa 1
+- feito: build Docker do NRO com `-DGH3_PGO=usar` consumindo o perfil existente de `out/pgo` (151 `.gcda`, gravado em 2026-10-18); nenhum código mudou (infra de `src/pgo.cpp`/`cmake/switch.cmake` já existia); playbook §8/F4.3.
+- decisões (e por quê): usar o perfil atual em vez de exigir regravação (o Switch é do humano; o perfil cobre o código traduzido); manter `-Wno-error=coverage-mismatch`, porque o lado do app mudou desde a gravação (196 avisos) e isso não impede o uso no `gh3_recomp`.
+- verificado: aceite exit 0 (`test_pgo.py` 4 passed + `.gcda` presente); suíte **292 passed**; build 408 s; `-fprofile-use` no `build.ninja`; `-fprofile-report` em `main.cpp`/`gh3_recomp.0.cpp` com `Profile consistency report` e 0 mismatch; `nm | grep gcov`=0; `_start`=0x0; `NRO OK: 0x3df9000`.
+- pendente: PGO em todos os TUs exige regravar no Switch (F5, humano); ganho de FPS/ms no aparelho (F5).
+- 2026-10-20 06:26 T44 ✅ aceita (iter 4)
