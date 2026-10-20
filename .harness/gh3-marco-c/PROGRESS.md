@@ -239,3 +239,10 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - pendente: observação fora do escopo — a captura ainda cria depth `1280x2048` e `1040x2048` (o cap do T24 só vale para alias `alias_msaa`).
 - 2026-10-20 02:12 T33 (iter 1)
 - 2026-10-20 02:16 T33 ✅ aceita (iter 6)
+
+### T34 — tentativa 1
+- feito: série local `patches/rexglue-local` (`0001-spirv-tools-opt.patch`) aplicada pelo `tools/setup_sdk.sh` depois da do P8; `tools/build_spirv_tools.sh` (sem args = Mac, `--switch`, `--check`) e `tests/test_spirv_tools.py` (4 testes). O patch liga `add_subdirectory(spirv-tools)` no bloco Vulkan com `SPIRV_SKIP_EXECUTABLES`/`SPIRV_SKIP_TESTS` ON, `SPIRV_WERROR=OFF` e `SPIRV-Headers_SOURCE_DIR` apontando o `spirv-headers` do SDK (libs static, BUILD_SHARED_LIBS=OFF).
+- verificado: aceite exit 0 (`pytest tests/test_spirv_tools.py` 4 passed + `test -f out/sdk-install/lib/libSPIRV-Tools-opt.a`); suíte **216 passed**; lib do Mac com 36 símbolos `spvtools::Optimizer` e headers em `out/sdk-install/include/spirv-tools/`; devkitA64 (GCC 15.2) compila e instala em `out/sdk-switch-install/lib` (avulso) e o alvo `SPIRV-Tools-opt` também builda dentro de `build/switch` (206 TUs); configure do NRO ok.
+- decisões (e por quê): série local versionada no repo em vez de mexer na série externa do project8-sw (o `--check` compara a árvore exata e a série do P8 é compartilhada); diretório `patches/rexglue-local` porque `patches/sdk` cai no `.gitignore` (`sdk/` casa em qualquer nível); `SPIRV_WERROR=OFF` porque o GCC 15 do devkitA64 avisa em código de terceiro; `--check` usa `grep >/dev/null` porque `nm | grep -q` morre de SIGPIPE sob pipefail.
+- pendente: T35 linka `SPIRV-Tools-opt`/`SPIRV-Tools` no renderer e roda o otimizador; NRO não rebuildado (cada build do Switch ganhou ~330 TUs de spirv-tools). Playbook §8/F2.1 atualizado.
+- 2026-10-20 02:31 T34 ✅ aceita (iter 7)

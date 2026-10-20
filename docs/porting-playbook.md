@@ -338,3 +338,35 @@ a imagem escalada do T16 pelo **CAS do FidelityFX** que o próprio SDK já usa n
   `[native] scene CAS: upscaling 832x468 -> 1280x720 (ratio 0.65)` na primeira subida.
 - Captura no Mac a 0.65: white=0,001 stddev≈50-53 (mesma faixa do LINEAR); o ganho é nitidez, não
   brilho/paridade de cor. Comparação visual e custo de GPU no Switch ficam para a F5.
+
+### F2.1 — SPIRV-Tools/spirv-opt construído no SDK (2026-10-20)
+
+O SDK fixado (f5337cd) não constrói o spirv-tools: `sdk/thirdparty/CMakeLists.txt` só criava o
+`spirv-tools-headers` (INTERFACE) e o `libSPIRV.a` instalado é o do **glslang**. O `spvtools::Optimizer`
+mora em `SPIRV-Tools-opt`, que depende de `SPIRV-Tools` + `SPIRV-Tools-link`.
+
+- **Patch local**: `patches/rexglue-local/series` (`0001-spirv-tools-opt.patch`) entra depois da série do
+  project8-sw e é aplicado pelo `tools/setup_sdk.sh` (setup e `--check`; `--list` continua só a série do
+  P8, que os testes fixam). Ele adiciona `add_subdirectory(spirv-tools)` no bloco Vulkan com
+  `SPIRV-Headers_SOURCE_DIR` apontando o `spirv-headers` do próprio SDK, `SPIRV_SKIP_EXECUTABLES`/
+  `SPIRV_SKIP_TESTS` ON (só libs) e `SPIRV_WERROR=OFF` (GCC 15 do devkitA64 avisa em código de terceiro).
+- **Mais barato que mexer na série do project8-sw**: a série externa é compartilhada com outros ports e o
+  `--check` compara a árvore exata; a série local fica versionada no repositório.
+- **Build/install**:
+  - Mac: `tools/build_spirv_tools.sh` (chama `tools/build_host_sdk.sh --sdk-only` + `--check`) instala
+    `out/sdk-install/lib/libSPIRV-Tools{,,-opt,-link,-lint,-diff,-reduce}.a` e
+    `out/sdk-install/include/spirv-tools/{libspirv.h,libspirv.hpp,optimizer.hpp,linker.hpp}`.
+  - devkitA64: `tools/build_spirv_tools.sh --switch` configura o subprojeto avulso com
+    `cmake/switch-rexglue-gcc.cmake` no container `gh3-switch-clang` e instala em
+    `out/sdk-switch-install/lib`. O mesmo alvo também compila dentro do build do NRO
+    (`cmake --build build/switch --target SPIRV-Tools-opt`), porque o `sdk/` é subdiretório dele.
+- `tools/build_spirv_tools.sh --check` valida o patch, o header e o símbolo `spvtools::Optimizer` na lib
+  (`nm`), que é o oráculo do `tests/test_spirv_tools.py`.
+- **Armadilhas**:
+  - `patches/sdk/` seria ignorado pelo `.gitignore` (`sdk/` casa em qualquer nível): por isso a série
+    local chama `patches/rexglue-local/`.
+  - `nm lib.a | grep -q ...` morre de SIGPIPE sob `set -o pipefail` (mesma armadilha do Switch antiga):
+    usar `grep ... >/dev/null`.
+  - O build do SDK agora compila ~330 TUs a mais (spirv-tools + lint/diff/reduce, que o CMake do projeto
+    não deixa desligar) tanto no Mac quanto em cada build do NRO.
+- Consumo das libs (`gh3_native_spirv_opt`) é o T35/F2.2.

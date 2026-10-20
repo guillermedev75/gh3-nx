@@ -1,0 +1,25 @@
+diff --git a/thirdparty/CMakeLists.txt b/thirdparty/CMakeLists.txt
+index 73f2fa9..48014dd 100644
+--- a/thirdparty/CMakeLists.txt
++++ b/thirdparty/CMakeLists.txt
+@@ -337,6 +337,20 @@ if(REXGLUE_USE_VULKAN)
+         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/spirv-tools/include>
+         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+ 
++    # SPIRV-Tools completas (libspirv, link e o otimizador). O SDK fixado só
++    # expunha os headers; o spvtools::Optimizer mora em SPIRV-Tools-opt.
++    # Biblioteca apenas (sem executáveis nem testes): o Mac e o devkitA64 usam
++    # só as .a. O spirv-tools busca external/spirv-headers por padrão; o
++    # subprojeto do SDK está ao lado, então apontamos a source dir dele.
++    set(SPIRV-Headers_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/spirv-headers"
++        CACHE PATH "SPIR-V headers usados pelo spirv-tools" FORCE)
++    set(SPIRV_SKIP_EXECUTABLES ON CACHE BOOL "" FORCE)
++    set(SPIRV_SKIP_TESTS ON CACHE BOOL "" FORCE)
++    # GCC 15 do devkitA64 avisa em código de terceiro; -Werror derrubaria o build.
++    set(SPIRV_WERROR OFF CACHE BOOL "" FORCE)
++    set(SPIRV_TOOLS_BUILD_STATIC ON CACHE BOOL "" FORCE)
++    add_subdirectory(spirv-tools)
++
+     # glslang/SPIRV - SPIR-V code generation for shader translation
+     set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
+     set(ENABLE_SPVREMAPPER OFF CACHE BOOL "" FORCE)

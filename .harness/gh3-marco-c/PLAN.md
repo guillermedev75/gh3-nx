@@ -120,7 +120,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [x] T33: 60fps F1.4 — auditoria de formatos: 16F sem HDR, gamma, depth24, 64bpp
   aceite: .venv/bin/python -m pytest -q tests/test_format_audit.py && python3 tools/gameplay_capture.py --renderer native --out out/parity/native-audit.png -- --gh3_native_format_log=true && grep -q 'format audit:' out/parity/native-audit.capture/game.log
   detalhe: eliminar alvo caro sem HDR real; medir. Plano F1.4.
-- [ ] T34: 60fps F2.1 — construir SPIRV-Tools/opt no Mac e no devkitA64
+- [x] T34: 60fps F2.1 — construir SPIRV-Tools/opt no Mac e no devkitA64
   aceite: .venv/bin/python -m pytest -q tests/test_spirv_tools.py && test -f out/sdk-install/lib/libSPIRV-Tools-opt.a
   detalhe: patch local no SDK (add_subdirectory spirv-tools, opt on) aplicado pelo setup_sdk.sh; build/install nos dois toolchains. Se o devkitA64 nao compilar, documentar e bloquear (nao inventar). Plano F2.1.
 - [ ] T35: 60fps F2.2 — spirv-opt nos shaders traduzidos (validar/fallback/log)
