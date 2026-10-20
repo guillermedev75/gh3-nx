@@ -209,3 +209,22 @@ escritos, sem escrita de Z/stencil. O `Draw` agora os pula (`src/native/native_i
 testada). Na captura local a quente: **53.248 draws pulados** (~17/quadro a ~35 fps), imagem idêntica
 (white=0,001, stddev=50,0). Alpha test NEVER idem; desenhos que escrevem Z/stencil não são pulados.
 No Mac o ganho de GPU é ~0 (não é o limite); o ganho real (CPU do ring + blend) é medido no Switch (F5).
+
+### F0.1 — protocolo A/B (2026-10-20)
+
+`tools/gameplay_fps.py --runs 3` repete a corrida na mesma música/trecho (o roteiro prende o início no mesmo
+ponto) e agrega por mediana. Regras para comparar builds:
+
+- `game_fps` no topo = **mediana** das corridas (com `--runs`); `run_results` guarda cada corrida, para não
+  esconder uma corrida ruim.
+- **p1 (1% low)** = `1000/p99` do frame time, sobre os `XELOG_GPU PRESENT native` de **todas** as corridas
+  (não é a mediana de 3 p1s). `p99_ms` usa posto mais próximo; `pct_over_50ms` conta os quadros >50 ms.
+- O frame time vem do timestamp de cada PRESENT (resolução de 1 ms), no mesmo trecho dos blocos de 10 s: o 1º
+  bloco depois da marca é descartado. Sem PRESENTs no log (sem `--log_level debug`), `%>50 ms` cai para o
+  contador `slow frames: N over 50 ms` do relatório por bloco.
+- No Switch o timestamp é o do próprio log; o timestamp de GPU do NVK no profiler continua precisando de
+  ×1,627 (playbook §8, tabela). Não misture as duas fontes.
+- `--min-vs` continua comparando `game_fps` (agora mediana) com a linha de base, tolerância 5%.
+- Custo: ~2 min por corrida no Mac (30 s medidos); 3 corridas = ~6 min. Medido em 2026-10-20 (Mac, nativo,
+  20 s, 1 corrida, máquina quente): game_fps 63,3, median frame 17 ms (58,8 fps), p1 29,4, p99 34 ms,
+  >50 ms 0%, 1021 quadros amostrados.

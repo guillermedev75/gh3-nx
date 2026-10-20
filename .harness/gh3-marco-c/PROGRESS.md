@@ -195,3 +195,10 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - feito: validação local do T24/F1.2 (perfil por passe).
 - verificado: `h2048 c=t0p320` não aparece; o passe virou h512/h256.
 - 2026-10-19 23:55 T30 ✅ aceita (fora do loop)
+
+### T26 — tentativa 1
+- feito: `tools/gameplay_fps.py --runs N` (padrão 1) roda N corridas e agrega: `game_fps`/`swaps_per_s`/`wait_ms` por mediana, `run_results` por corrida; p1 (1% low = 1000/p99 do frame time), `p99_ms`, `%>50 ms` e mediana de frame time vêm dos timestamps dos PRESENTs de todas as corridas, no mesmo trecho dos blocos de 10 s (1º bloco descartado). Sem PRESENTs, `%>50 ms` usa `slow frames: N over 50 ms`. Playbook §8 ganhou a seção F0.1.
+- decisões: p1 agregado sobre os quadros (não mediana de 3 p1s) para ser estável com 3 corridas; timestamp do log tem 1 ms (no Switch não é o do NVK, que pede ×1,627); `--min-vs` segue no `game_fps` mediano. Nada do renderer mudou.
+- verificado: aceite exit 0 (`pytest tests/test_gameplay_fps.py` 10, `--help` com `--runs`); suíte 172; corrida real 20 s no Mac: game_fps 63,3, frame mediano 17 ms, p1 29,4, p99 34 ms, >50 ms 0% (1021 quadros).
+- pendente: medir o A/B de 3 corridas no Switch (F5, com o aparelho).
+- 2026-10-20 00:05 T26 ✅ aceita (iter 1)

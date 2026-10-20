@@ -102,7 +102,7 @@ Status: [ ] pendente · [x] feita · [!] bloqueada — só o runner muda status.
 - [x] T30: 60fps F0.5 — validar o T24 localmente (sem passe 320x2048)
   aceite: python3 tools/gameplay_capture.py --renderer native --out out/parity/native-t24v.png -- --gh3_native_scene_scale=0.65 --gh3_native_gpu_profile=true && python3 tools/image_stats.py out/parity/native-t24v.png --max-white 0.15 --min-stddev 20 && ! grep -q 'h2048 c=t0p320' out/parity/native-t24v.capture/game.log
   detalhe: feito; o passe virou h512/h256.
-- [ ] T26: 60fps F0.1 — protocolo A/B (3 corridas, mediana, p1, >50 ms)
+- [x] T26: 60fps F0.1 — protocolo A/B (3 corridas, mediana, p1, >50 ms)
   aceite: .venv/bin/python -m pytest -q tests/test_gameplay_fps.py && python3 tools/gameplay_fps.py --help 2>&1 | grep -q -- '--runs'
   detalhe: add --runs N (default 1) ao tools/gameplay_fps.py, mediana e p1/%>50ms; testes com logs sinteticos; playbook §8. Plano F0.1.
 - [ ] T27: 60fps F0.2 — log por swap (frontbuffer, formato, clear, resolve, RT key, fence)

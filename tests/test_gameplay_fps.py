@@ -108,3 +108,77 @@ def test_tool_fails_when_game_exits_without_data(tmp_path):
     r = subprocess.run([sys.executable, TOOL, "--out", str(out), "--seconds", "10", "--timeout", "20",
                         "--", sys.executable, str(game)], capture_output=True, text=True, timeout=60, cwd=ROOT)
     assert r.returncode == 1 and not out.exists()
+
+
+# --- T26/F0.1: protocolo A/B (3 corridas, mediana, p1, % >50 ms) ---
+
+def present(ts):
+    return f"[{ts}] [debug] [gpu] [t1] XELOG_GPU PRESENT native"
+
+
+def block_at(ts, swaps, draws, per_frame_draws=10, wait_ms=7.6):
+    p = f"[{ts}] [info] [core] [t1] [native] "
+    return "\n".join([
+        f"{p}last 10 s: 5000 packets, {draws} draws, 100 copies, {swaps} swaps, 0 waits cut short",
+        f"{p}per frame: {per_frame_draws} draws, 6 state rebuilds, 81 texture binding rebuilds",
+        f"{p}per frame: 0.9 waits for the game, {wait_ms} ms waiting",
+    ])
+
+
+def present_log(steps, start="2026-10-17 09:00:10.100"):
+    """101 presents com os intervalos (s) de `steps`; devolve as linhas e o total de deltas."""
+    import datetime
+
+    t = datetime.datetime.strptime(start, "%Y-%m-%d %H:%M:%S.%f")
+    lines = []
+    for i in range(101):
+        lines.append(present(t.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]))
+        if i < len(steps):
+            t += datetime.timedelta(seconds=steps[i])
+    return lines
+
+
+def test_summarize_p1_and_over_50ms_from_present_timestamps():
+    # 95 quadros de 20 ms + 5 de 60 ms: p99 = 60 ms -> p1 low = 16,7 fps; 5% >50 ms.
+    presents = present_log([0.020] * 95 + [0.060] * 5)
+    text = "\n".join([
+        MARK,
+        block_at("2026-10-17 09:00:10.000", 300, 3000),
+        block_at("2026-10-17 09:00:20.000", 300, 3000),
+        block_at("2026-10-17 09:00:30.000", 300, 3000),
+    ] + presents) + "\n"
+    d = fps.summarize(text, seconds=20)
+    assert d["frames_sampled"] == 100
+    assert d["p99_ms"] == 60.0
+    assert abs(d["p1_fps"] - 1000 / 60) < 1e-9
+    assert d["pct_over_50ms"] == 5.0
+    assert d["frame_ms_median"] == 20.0
+    assert d["frame_fps_median"] == 50.0
+
+
+def test_aggregate_runs_takes_median_and_pools_frames():
+    runs = [
+        {"swaps_per_s": 50, "draws_per_s": 500, "wait_ms": 5, "game_fps": 50,
+         "frame_ms": [20, 20, 60]},
+        {"swaps_per_s": 60, "draws_per_s": 600, "wait_ms": 3, "game_fps": 60,
+         "frame_ms": [16, 16, 16]},
+        {"swaps_per_s": 70, "draws_per_s": 700, "wait_ms": 1, "game_fps": 70,
+         "frame_ms": [14, 14, 14]},
+    ]
+    d = fps.aggregate(runs)
+    assert d["runs"] == 3 and len(d["run_results"]) == 3
+    assert d["game_fps"] == 60 and d["swaps_per_s"] == 60 and d["wait_ms"] == 3
+    assert "frame_ms" not in d["run_results"][0]
+    assert d["p99_ms"] == 60.0  # pior dos 9 quadros, p99 por posto
+    assert d["frames_sampled"] == 9
+    assert abs(d["pct_over_50ms"] - 100 / 9) < 1e-9
+
+
+def test_tool_runs_the_game_three_times(tmp_path):
+    r, out, _ = run_tool(tmp_path, "--runs", "3", seconds="20")
+    assert r.returncode == 0, r.stdout + r.stderr
+    d = json.loads(out.read_text())
+    assert d["runs"] == 3 and len(d["run_results"]) == 3
+    assert d["game_fps"] == 50.0
+    for i in range(3):
+        assert (tmp_path / "sub" / "r.run" / f"run{i}" / "game.log").exists()
