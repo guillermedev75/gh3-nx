@@ -114,4 +114,5 @@ def test_renderer_wires_the_cvar_and_logs_at_startup():
     assert "native_scene_cas.h" in src
     assert "scene CAS: enabled" in src
     assert "CasUpscale(" in src
-    assert "gh3_native_scene_cas = true" in open("switch/gh3.toml").read()
+    # O T47 tornou o fsr1 o upscaler padrão do pacote; o cas continua uma opção da config.
+    assert "gh3_native_scene_cas" in open("switch/gh3.toml").read()

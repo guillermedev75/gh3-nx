@@ -339,6 +339,40 @@ a imagem escalada do T16 pelo **CAS do FidelityFX** que o próprio SDK já usa n
 - Captura no Mac a 0.65: white=0,001 stddev≈50-53 (mesma faixa do LINEAR); o ganho é nitidez, não
   brilho/paridade de cor. Comparação visual e custo de GPU no Switch ficam para a F5.
 
+### F1.1d — FSR1 (EASU) no upscale da cena escalada (2026-10-20)
+
+`--gh3_native_scene_upscale=linear|cas|fsr1` (cvar string `gh3_native_scene_upscale`, padrão `linear` no
+código e `fsr1` no `switch/gh3.toml`) escolhe o filtro do blit que sobe a cena do T16. O `fsr1` é a etapa
+**EASU** do FidelityFX FSR1 (upscale adaptativo de borda), implementada no T47:
+
+- Mesmo caminho da F1.1c: o shader é o SPIR-V pré-compilado `guest_output_ffx_fsr_easu_ps` (mais o VS de
+  retângulo) de `sdk/src/ui/shaders/vulkan_spirv/` — o SDK já o traz para o presenter; nada novo para compilar.
+- **Diferença de binding**: o PS do EASU lê a imagem em binding 0 **e um sampler em binding 1**. O sampler
+  é imutável no descriptor set layout (linear, clamp-to-edge), como no presenter do SDK; por isso o
+  descriptor set só leva a imagem. Uma pipeline nova que reaproveitasse o layout do CAS (1 binding) daria
+  erro de validação.
+- A parte pura (`src/native/native_scene_upscale.h`) monta as constantes do `FsrEasuCon` — proporção
+  origem/destino e `1/tamanho` da origem (o EASU **não** tem `output_offset`, diferente do CAS, porque
+  escreve no próprio alvo) — e as do `FsrRcasCon` (`2^-stops`, 1:1). `static_assert` amarram os offsets:
+  retângulo 0-15, ratio em 16, `input_size_inv` em 24 (EASU); `output_offset` em 16, sharpness em 24 (RCAS).
+- **RCAS fica para um follow-up**: é 1:1 e exige uma imagem intermediária full-size (mais um passe e mais
+  memória de cor); o EASU sozinho já substitui o LINEAR e escreve direto no alvo. As constantes do RCAS já
+  estão no header, testadas.
+- Compatibilidade: o bool `gh3_native_scene_cas=true` (T32) ainda seleciona o `cas` quando o string é
+  `linear`. Só o upscale usa EASU/CAS; descer de escala, profundidade e formato ≠ `R8G8B8A8_UNORM` seguem LINEAR.
+- Log: `[native] scene upscale: fsr1 ...` ao iniciar e `[native] scene FSR1: EASU upscaling 832x468 -> 1280x720 (ratio 0.65)`.
+- **Bug achado e consertado (2026-10-20): cena comprimida na vertical e preta embaixo com `fsr1`.** Sintoma
+  (Mac e Switch): palco a ~0,70 da altura, pista em y≈460 em vez de 645; com `linear` na mesma config, normal.
+  Causa: o EASU lê com **UV normalizada**, então `input_size_inv` tem de ser `1/tamanho da TEXTURA`; o código
+  passava `1/região` (`1/468`), mas a imagem escalada tem **832x666** (alvo do jogo maior que a área da cena).
+  468/666 = 0,70 = a compressão. O CAS não sofre disso porque lê com `texelFetch` (pixel inteiro). Conserto:
+  `EasuFor(região, textura, destino, alvo)` com `inv = 1/textura` e proporção da região; recusa região maior
+  que a textura. Teste: `test_easu_normalizes_by_the_texture_not_the_region`. Lição geral: **todo shader
+  que amostra com UV normalizada precisa do tamanho alocado da imagem, não da área útil**; os alvos da EDRAM
+  quase nunca têm o tamanho da área desenhada.
+- Mac a 0.65: captura FSR1 white=0,000 stddev≈65 (o filtro adaptativo realça mais as bordas que o LINEAR
+  stddev≈45); a paridade fina e o custo de GPU ficam para a F5 no Switch.
+
 ### F2.1 — SPIRV-Tools/spirv-opt construído no SDK (2026-10-20)
 
 O SDK fixado (f5337cd) não constrói o spirv-tools: `sdk/thirdparty/CMakeLists.txt` só criava o

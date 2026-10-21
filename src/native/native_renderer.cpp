@@ -67,6 +67,7 @@ extern "C" {
 #include "native_scene_scale.h"
 #include "native_scene_dynamic.h"
 #include "native_scene_cas.h"
+#include "native_scene_upscale.h"
 #include "native_spirv_opt.h"
 #include "native_shader_simplify.h"
 #include "native_pipeline_prewarm.h"
@@ -78,6 +79,7 @@ extern "C" {
 // sobe a cena escalada. O VS desenha o retângulo em NDC e o PS lê 9 texels e aplica o CAS.
 namespace shaders {
 #include <guest_output_ffx_cas_resample_ps.h>
+#include <guest_output_ffx_fsr_easu_ps.h>
 #include <guest_output_triangle_strip_rect_vs.h>
 }  // namespace shaders
 #include "native_primitive_expand.h"
@@ -120,6 +122,11 @@ REXCVAR_DEFINE_BOOL(gh3_native_scene_cas, false, "GH3",
 REXCVAR_DEFINE_DOUBLE(gh3_native_scene_cas_sharpness, 0.2, "GH3",
                       "Sharpen do CAS no upscale da cena, 0-1 (0 desliga; o shader recebe o valor "
                       "pós-setup do FidelityFX)");
+REXCVAR_DEFINE_STRING(gh3_native_scene_upscale, "linear", "GH3",
+                      "Upscaler do blit que sobe a cena escalada para o alvo cheio: linear | cas | "
+                      "fsr1 (etapa EASU do FSR1, upscale adaptativo de borda), todos só com "
+                      "gh3_native_scene_scale < 1 e alvo de cor R8G8B8A8_UNORM (T47). O bool "
+                      "gh3_native_scene_cas=true da T32 ainda seleciona o cas quando este é linear");
 REXCVAR_DEFINE_BOOL(gh3_native_skip_shadows, false, "GH3",
                     "Experimento de FPS: pula os draws do mapa de sombra (alvo cor base 0, pitch 160); "
                     "a sombra fica com o conteudo do frame anterior");
@@ -515,6 +522,22 @@ struct Renderer::Impl {
   std::vector<SceneCasPipeline> scene_cas_pipelines;
   bool scene_cas_failed = false;
   bool scene_cas_logged = false;
+  // T47: upscaler escolhido (gh3_native_scene_upscale = linear|cas|fsr1). O FSR1 é a etapa EASU, com
+  // pipeline e descriptor set próprios: o PS do EASU lê a imagem em binding 0 e um sampler
+  // linear-clamp imutável em binding 1 (é o que o presenter do SDK liga no `guest_output_ffx_fsr_easu_ps`).
+  scene::UpscaleMode scene_upscale_mode = scene::UpscaleMode::kLinear;
+  VkSampler scene_easu_sampler = VK_NULL_HANDLE;
+  VkDescriptorSetLayout scene_easu_set_layout = VK_NULL_HANDLE;
+  VkPipelineLayout scene_easu_layout = VK_NULL_HANDLE;
+  struct SceneEasuPipeline {
+    VkFormat format;
+    VkPipeline pipeline;
+  };
+  std::vector<SceneEasuPipeline> scene_easu_pipelines;
+  bool scene_easu_failed = false;
+  bool scene_easu_logged = false;
+  // Último extent logado (o EASU pode ver mais de um tamanho na mesma sessão).
+  scene::SceneBlit scene_easu_last_extent{};
   // gh3_native_alias_cap (ver o cvar).
   bool alias_cap = true;
   // gh3_native_zcull (ver o cvar).
@@ -1572,6 +1595,8 @@ struct Renderer::Impl {
   // T32: CAS no lugar do blit LINEAR ao subir a cena escalada; false = usa o blit.
   bool EnsureSceneCas(VkFormat format);
   bool CasUpscale(RenderTarget* source, RenderTarget* target, const scene::SceneBlit& extent);
+  bool EnsureSceneEasu(VkFormat format);
+  bool EasuUpscale(RenderTarget* source, RenderTarget* target, const scene::SceneBlit& extent);
   void EndPass() {
     if (in_pass) {
       dfn().vkCmdEndRendering(cmd());
@@ -1637,6 +1662,18 @@ bool Renderer::Impl::Initialize() {
     if (!scene::Enabled(scene_scale)) {
       REXLOG_WARN("[native] scene CAS: has no effect while gh3_native_scene_scale is 1.0");
     }
+  }
+  // T47: o upscaler do blit da cena escalada. O bool gh3_native_scene_cas do T32 ainda seleciona o
+  // CAS quando gh3_native_scene_upscale é linear (compatibilidade da config antiga).
+  scene_upscale_mode = scene::ParseUpscaleMode(REXCVAR_GET(gh3_native_scene_upscale));
+  if (scene_upscale_mode == scene::UpscaleMode::kLinear && scene_cas) {
+    scene_upscale_mode = scene::UpscaleMode::kCas;
+  }
+  REXLOG_INFO("[native] scene upscale: {} on the upscale of the scaled scene (scale < 1, opaque "
+              "R8G8B8A8); LINEAR elsewhere",
+              std::string(scene::UpscaleModeName(scene_upscale_mode)));
+  if (scene_upscale_mode != scene::UpscaleMode::kLinear && !scene::Enabled(scene_scale)) {
+    REXLOG_WARN("[native] scene upscale: has no effect while gh3_native_scene_scale is 1.0");
   }
   alias_cap = REXCVAR_GET(gh3_native_alias_cap);
   zcull = REXCVAR_GET(gh3_native_zcull);
@@ -2286,6 +2323,15 @@ void Renderer::Impl::Shutdown() {
   if (scene_cas_set_layout) {
     dfn().vkDestroyDescriptorSetLayout(vk, scene_cas_set_layout, nullptr);
   }
+  for (SceneEasuPipeline& cached : scene_easu_pipelines) {
+    if (cached.pipeline) dfn().vkDestroyPipeline(vk, cached.pipeline, nullptr);
+  }
+  scene_easu_pipelines.clear();
+  if (scene_easu_layout) dfn().vkDestroyPipelineLayout(vk, scene_easu_layout, nullptr);
+  if (scene_easu_set_layout) {
+    dfn().vkDestroyDescriptorSetLayout(vk, scene_easu_set_layout, nullptr);
+  }
+  if (scene_easu_sampler) dfn().vkDestroySampler(vk, scene_easu_sampler, nullptr);
   if (depth_convert_pipeline) dfn().vkDestroyPipeline(vk, depth_convert_pipeline, nullptr);
   if (depth_convert_layout) dfn().vkDestroyPipelineLayout(vk, depth_convert_layout, nullptr);
   if (depth_copy_pipeline) dfn().vkDestroyPipeline(vk, depth_copy_pipeline, nullptr);
@@ -3123,6 +3169,230 @@ bool Renderer::Impl::CasUpscale(RenderTarget* source, RenderTarget* target,
   return true;
 }
 
+// T47: pipeline do EASU (FSR1) por formato do alvo, no mesmo encaixe do CAS — criado na primeira
+// subida da cena e, em falha, o CAS/LINEAR continua valendo (não derruba nada). O PS do EASU lê a
+// imagem em binding 0 e um sampler linear-clamp imutável em binding 1, como o presenter do SDK.
+bool Renderer::Impl::EnsureSceneEasu(VkFormat format) {
+  for (const SceneEasuPipeline& cached : scene_easu_pipelines) {
+    if (cached.format == format) return cached.pipeline != VK_NULL_HANDLE;
+  }
+  if (scene_easu_failed) return false;
+  if (!scene_easu_set_layout) {
+    VkSamplerCreateInfo sampler_info = {};
+    sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sampler_info.magFilter = VK_FILTER_LINEAR;
+    sampler_info.minFilter = VK_FILTER_LINEAR;
+    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_info.maxLod = VK_LOD_CLAMP_NONE;
+    if (dfn().vkCreateSampler(vk, &sampler_info, nullptr, &scene_easu_sampler) != VK_SUCCESS) {
+      scene_easu_failed = true;
+      return false;
+    }
+    VkDescriptorSetLayoutBinding bindings[2] = {};
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[1].pImmutableSamplers = &scene_easu_sampler;
+    VkDescriptorSetLayoutCreateInfo layout_info = {};
+    layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layout_info.bindingCount = uint32_t(std::size(bindings));
+    layout_info.pBindings = bindings;
+    if (dfn().vkCreateDescriptorSetLayout(vk, &layout_info, nullptr, &scene_easu_set_layout) !=
+        VK_SUCCESS) {
+      scene_easu_failed = true;
+      return false;
+    }
+    VkPushConstantRange ranges[2] = {
+        {VK_SHADER_STAGE_VERTEX_BIT, 0, uint32_t(sizeof(scene::CasRect))},
+        {VK_SHADER_STAGE_FRAGMENT_BIT, uint32_t(sizeof(scene::CasRect)),
+         uint32_t(sizeof(scene::EasuEffect))},
+    };
+    VkPipelineLayoutCreateInfo pipeline_layout = {};
+    pipeline_layout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipeline_layout.setLayoutCount = 1;
+    pipeline_layout.pSetLayouts = &scene_easu_set_layout;
+    pipeline_layout.pushConstantRangeCount = uint32_t(std::size(ranges));
+    pipeline_layout.pPushConstantRanges = ranges;
+    if (dfn().vkCreatePipelineLayout(vk, &pipeline_layout, nullptr, &scene_easu_layout) !=
+        VK_SUCCESS) {
+      scene_easu_failed = true;
+      return false;
+    }
+  }
+  VkShaderModule modules[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
+  VkShaderModuleCreateInfo module_info = {};
+  module_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  module_info.codeSize = sizeof(::shaders::guest_output_triangle_strip_rect_vs);
+  module_info.pCode = ::shaders::guest_output_triangle_strip_rect_vs;
+  bool ok = dfn().vkCreateShaderModule(vk, &module_info, nullptr, &modules[0]) == VK_SUCCESS;
+  module_info.codeSize = sizeof(::shaders::guest_output_ffx_fsr_easu_ps);
+  module_info.pCode = ::shaders::guest_output_ffx_fsr_easu_ps;
+  ok = ok && dfn().vkCreateShaderModule(vk, &module_info, nullptr, &modules[1]) == VK_SUCCESS;
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  if (ok) {
+    VkPipelineShaderStageCreateInfo stages[2] = {};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = modules[0];
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = modules[1];
+    stages[1].pName = "main";
+    VkPipelineVertexInputStateCreateInfo vertex_input = {};
+    vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    VkPipelineInputAssemblyStateCreateInfo input_assembly = {};
+    input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    VkPipelineViewportStateCreateInfo viewport_state = {};
+    viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewport_state.viewportCount = 1;
+    viewport_state.scissorCount = 1;
+    VkPipelineRasterizationStateCreateInfo raster = {};
+    raster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    raster.polygonMode = VK_POLYGON_MODE_FILL;
+    raster.cullMode = VK_CULL_MODE_NONE;
+    raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    raster.lineWidth = 1.0f;
+    VkPipelineMultisampleStateCreateInfo multisample_state = {};
+    multisample_state.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisample_state.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineColorBlendAttachmentState attachment = {};
+    attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo blend = {};
+    blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    blend.attachmentCount = 1;
+    blend.pAttachments = &attachment;
+    VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamic = {};
+    dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamic.dynamicStateCount = uint32_t(std::size(dynamic_states));
+    dynamic.pDynamicStates = dynamic_states;
+    VkPipelineRenderingCreateInfo rendering = {};
+    rendering.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+    rendering.colorAttachmentCount = 1;
+    rendering.pColorAttachmentFormats = &format;
+    VkGraphicsPipelineCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    info.pNext = &rendering;
+    info.stageCount = 2;
+    info.pStages = stages;
+    info.pVertexInputState = &vertex_input;
+    info.pInputAssemblyState = &input_assembly;
+    info.pViewportState = &viewport_state;
+    info.pRasterizationState = &raster;
+    info.pMultisampleState = &multisample_state;
+    info.pColorBlendState = &blend;
+    info.pDynamicState = &dynamic;
+    info.layout = scene_easu_layout;
+    ok = dfn().vkCreateGraphicsPipelines(vk, driver_cache, 1, &info, nullptr, &pipeline) ==
+         VK_SUCCESS;
+  }
+  for (VkShaderModule module : modules) {
+    if (module) dfn().vkDestroyShaderModule(vk, module, nullptr);
+  }
+  if (!ok) {
+    REXLOG_WARN("[native] scene FSR1: EASU pipeline creation failed; the upscale falls back");
+    scene_easu_failed = true;
+    return false;
+  }
+  scene_easu_pipelines.push_back({format, pipeline});
+  return true;
+}
+
+bool Renderer::Impl::EasuUpscale(RenderTarget* source, RenderTarget* target,
+                                 const scene::SceneBlit& extent) {
+  if (!source || !target) return false;
+  scene::EasuParams params =
+      scene::EasuFor(extent.scaled_w, extent.scaled_h, source->width, source->height, extent.full_w,
+                     extent.full_h, target->width, target->height);
+  if (!params.valid || !EnsureSceneEasu(target->format)) return false;
+  BeginRecording();
+  EndPass();
+  VkCommandBuffer c = cmd();
+  VkDescriptorSet set = AllocateSet(scene_easu_set_layout);
+  if (!set) return false;
+  VkDescriptorImageInfo image = {VK_NULL_HANDLE, source->view, VK_IMAGE_LAYOUT_GENERAL};
+  VkWriteDescriptorSet write = {};
+  write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  write.dstSet = set;
+  write.dstBinding = 0;
+  write.descriptorCount = 1;
+  write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+  write.pImageInfo = &image;
+  dfn().vkUpdateDescriptorSets(vk, 1, &write, 0, nullptr);
+  VkMemoryBarrier before = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
+                            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                                VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+                            VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT};
+  dfn().vkCmdPipelineBarrier(c, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                                 VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             0, 1, &before, 0, nullptr, 0, nullptr);
+  PassTargets targets;
+  targets.color[0] = target;
+  if (!BeginPass(targets, params.height)) return false;
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  for (const SceneEasuPipeline& cached : scene_easu_pipelines) {
+    if (cached.format == target->format) pipeline = cached.pipeline;
+  }
+  VkViewport viewport = {0.0f, 0.0f, float(target->width), float(target->height), 0.0f, 1.0f};
+  VkRect2D scissor = {{0, 0}, {params.width, params.height}};
+  dfn().vkCmdBindPipeline(c, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+  dfn().vkCmdBindDescriptorSets(c, VK_PIPELINE_BIND_POINT_GRAPHICS, scene_easu_layout, 0, 1, &set, 0,
+                                nullptr);
+  dfn().vkCmdPushConstants(c, scene_easu_layout,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                           uint32_t(sizeof(params.push)), &params.push);
+  dfn().vkCmdSetViewport(c, 0, 1, &viewport);
+  dfn().vkCmdSetScissor(c, 0, 1, &scissor);
+  dfn().vkCmdDraw(c, 4, 1, 0, 0);
+  EndPass();
+  // Como o CAS, o EASU mexeu no estado dinâmico e nos binds que o caminho dos draws guarda como "já
+  // ligados": esquecer tudo força o próximo draw do jogo a religar o que é dele.
+  bound_pipeline = VK_NULL_HANDLE;
+  bound_layout = VK_NULL_HANDLE;
+  bound_static_sets = false;
+  bound_viewport = {};
+  bound_scissor = {};
+  VkMemoryBarrier after = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
+                           VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                           VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT |
+                               VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                               VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                               VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                               VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                               VK_ACCESS_SHADER_WRITE_BIT};
+  dfn().vkCmdPipelineBarrier(c, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &after, 0, nullptr, 0,
+                             nullptr);
+  if (!scene_easu_logged || extent.scaled_w != scene_easu_last_extent.scaled_w ||
+      extent.scaled_h != scene_easu_last_extent.scaled_h ||
+      extent.full_w != scene_easu_last_extent.full_w ||
+      extent.full_h != scene_easu_last_extent.full_h) {
+    scene_easu_logged = true;
+    scene_easu_last_extent = extent;
+    REXLOG_INFO("[native] scene FSR1: EASU upscaling {}x{} -> {}x{} (ratio {:g}/{:g}, inv {:g}/{:g}, "
+                "alvo {}x{})",
+                extent.scaled_w, extent.scaled_h, extent.full_w, extent.full_h,
+                double(params.push.effect.input_output_size_ratio[0]),
+                double(params.push.effect.input_output_size_ratio[1]),
+                double(params.push.effect.input_size_inv[0]),
+                double(params.push.effect.input_size_inv[1]), target->width, target->height);
+  }
+  return true;
+}
+
 // T16: o par alvo cheio F / imagem escalada S da cena. F acessado (HUD, resolve, limpeza) traz antes o
 // que S desenhou desde então (blit para cima); S usada para desenhar traz antes o que F recebeu (blit
 // para baixo: a limpeza do palco, por exemplo). Cada lado só absorve o que o outro tem de novo.
@@ -3150,7 +3420,13 @@ void Renderer::Impl::SyncSceneTarget(RenderTarget* target) {
           // Descer para a imagem escalada (a limpeza do palco, por exemplo) continua LINEAR.
           BlitTarget(full, small, int32_t(e.full_w), int32_t(e.full_h), int32_t(e.scaled_w),
                      int32_t(e.scaled_h), filter);
-        } else if (scene::CasCompatible(scene_cas, full->key.is_depth != 0, small->format,
+        } else if (scene_upscale_mode == scene::UpscaleMode::kFsr1 &&
+                   scene::Fsr1Compatible(true, full->key.is_depth != 0, small->format,
+                                         full->format) &&
+                   EasuUpscale(small, full, e)) {
+          // T47: subiu com EASU (FSR1).
+        } else if (scene_upscale_mode == scene::UpscaleMode::kCas &&
+                   scene::CasCompatible(true, full->key.is_depth != 0, small->format,
                                         full->format) &&
                    CasUpscale(small, full, e)) {
           // T32: subiu com CAS.

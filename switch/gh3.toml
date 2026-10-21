@@ -48,9 +48,12 @@ gh3_native_scene_scale = 0.65
 # Controlador dinâmico 0.65-1.0 em passos de 0.05 para caber em 16.7 ms (histerese de 3 quadros e 0.6 s
 # no mesmo nível; src/native/native_scene_dynamic.h). A escala acima é só o ponto de partida.
 gh3_native_scene_dynamic = true
-# CAS (FidelityFX) no blit que sobe a cena escalada para 1280x720, no lugar do LINEAR (T32): compensa o
-# borrão de renderizar a 0.65. Só atua com o alvo de cor R8G8B8A8_UNORM; o resto continua LINEAR.
-gh3_native_scene_cas = true
+# Upscaler do blit que sobe a cena escalada para 1280x720, no lugar do LINEAR: linear | cas | fsr1
+# (T47). O cas é o CAS (FidelityFX, T32) que compensa o borrão de renderizar a 0.65; o fsr1 é a etapa
+# EASU do FSR1 (upscale adaptativo de borda). Só atuam com o alvo de cor R8G8B8A8_UNORM; o resto segue
+# LINEAR. O bool gh3_native_scene_cas=true ainda seleciona o cas quando este é linear.
+gh3_native_scene_upscale = "fsr1"
+gh3_native_scene_cas = false
 gh3_native_scene_cas_sharpness = 0.2
 # spirv-opt nos shaders traduzidos (F2.2/T35): valida e otimiza cada módulo antes do driver; em
 # falha usa o original. O ganho é GPU (o NAK compila menos instruções), medido no Switch.
