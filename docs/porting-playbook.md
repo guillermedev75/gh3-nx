@@ -791,3 +791,33 @@ swap (`gh3_native_swap_log=true`) mostra clear/resolve/alias/fence de cada quadr
   Switch. **Validar sempre com as cvars do `switch/gh3.toml`** (sem a `vulkan_allow_present_mode_immediate`,
   que o `run-gh3.command` já passa: flag repetida faz o runtime ignorar todas em silêncio). No zsh,
   `$FLAGS` sem aspas não quebra em palavras — use um array do bash.
+
+
+## 10. O que outros ports com ReXGlue ensinam (levantamento de 2026-10-21)
+
+~254 repositórios citam o ReXGlue. Os que importam para um port de Switch:
+
+- **`Kaays/nfscarbon-nx`** (GPL-3.0, mesma pilha: renderer nativo + NVK, linhagem nfsmw-nx), `docs/measurements.md`:
+  - **Vídeo da intro lento = upload de textura genérico.** 71 % do thread do renderer em `UploadTexture`: os 3
+    planos do vídeo sobem a cada quadro pelo decode por bloco (offset tiled, troca de bytes byte a byte, switch
+    de formato por texel), 25–27 ms por quadro. Caminho rápido para formatos sem conversão: trechos contíguos
+    copiados de uma vez com troca de endian por palavra (linhas inteiras quando linear, grupos de 8 texels/16 B
+    quando tiled), conferido contra o laço genérico; ~10x no PC. **No GH3 a intro também é lenta.**
+  - **`PosixConditionBase::WaitMultiple` do SDK verificava os handles com sleeps de 1 ms**: espera em vários
+    objetos (XAudio, workers) acordava tarde. Troca por um "epoch" incrementado a cada sinal + variável de
+    condição, rechecando no máximo a cada 1 ms: latência de 494–530 µs → 54–67 µs.
+  - Limitador de FPS que dormia um período inteiro quando o quadro atrasava (70 ms viravam ~103 ms).
+  - Constantes float compactadas (só as que o shader lê): 25 → 9–18 MiB por quadro; vale mais com milhares de
+    draws por quadro (o GH3 tem ~270).
+  - Mesmos achados nossos: `non_volatile_as_local` derruba o boot (registradores lidos antes de escritos em
+    pedaços de exception handler; `tools/lee_antes.py` do nfsmw-nx); `cr/xer/ctr_as_local` mudam pouco.
+- **`infriker/fear-nx`**: NVK, ~30 FPS com GPU a 614 MHz; D24, anisotropia 2x, sem MSAA, recursos de resolve
+  compartilhados, cache de pipelines no SD.
+- **Caminho alternativo de render: reNut + plume + deko3d** (`masterspike52/reNut`, o port de Banjo N&B; levado
+  ao Switch como `banjo-nx`; usado por `ChanseyIsTheBest/peggle1-nx` e `peggle2-nx`). Em vez de emular a GPU do
+  360 (PM4, EDRAM, resolves — onde estão nossos custos e bugs), intercepta as chamadas **Direct3D do jogo** e
+  desenha direto em **deko3d**, a API nativa do Switch. Shaders: SPIR-V → SPIRV-Cross → GLSL do deko3d,
+  compilados no console com `uam` e guardados no SD. Viabilidade para o GH3 depende de achar as funções D3D do
+  XDK no `default.xex` (tarefa T52).
+- **`jillsandwich1998/reGH2`** (Guitar Hero II, PC/Linux): menu próprio com DLC, controles e contador de FPS.
+  Motor da Harmonix (≠ Neversoft), então serve como ideia de UX, não como código.
