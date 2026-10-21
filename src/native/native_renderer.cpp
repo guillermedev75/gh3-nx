@@ -1643,7 +1643,13 @@ bool Renderer::Impl::Initialize() {
   multisample = REXCVAR_GET(gh3_native_msaa);
   msaa_as_samples = REXCVAR_GET(gh3_native_msaa_as_samples);
   scene_scale = scene::ClampScale(float(REXCVAR_GET(gh3_native_scene_scale)));
-  if (REXCVAR_GET(gh3_native_scene_dynamic)) {
+  const bool scene_scale_allowed = scene::ScaleAllowed(multisample, msaa_as_samples);
+  if (!scene_scale_allowed && (scene::Enabled(scene_scale) || REXCVAR_GET(gh3_native_scene_dynamic))) {
+    REXLOG_WARN("[native] scene scale off: incompatible with gh3_native_msaa_as_samples=false "
+                "(the stage is already drawn at one sample per guest pixel)");
+    scene_scale = 1.0f;
+  }
+  if (scene_scale_allowed && REXCVAR_GET(gh3_native_scene_dynamic)) {
     // T31: o piso do controlador é 0.65; a escala pedida só define por onde ele começa.
     scene_dynamic = std::make_unique<scene::DynamicScale>(scene::DynamicConfig(), scene_scale);
     scene_scale = float(scene_dynamic->scale());

@@ -69,4 +69,12 @@ inline bool Qualifies(uint32_t host_pitch, bool depth_used, uint32_t msaa, uint3
   return host_pitch == kScenePitch && depth_used && !msaa && !alias_msaa;
 }
 
+// Com msaa_as_samples=false e sem MSAA de host (T15, padrão do Switch) o palco é desenhado na superfície
+// MSAA do guest com 1 amostra (640x360 para 4x: já um quarto dos pixels) e espelhado no alvo 1x de pitch
+// 1280. Escalar esse alvo (T16/T31) quebra o espelho: no Switch o palco saiu preto, só silhuetas e luzes
+// (2026-10-21), e quase não economiza GPU. Nesse caminho a cena não escala.
+inline bool ScaleAllowed(bool host_multisample, bool msaa_as_samples) {
+  return host_multisample || msaa_as_samples;
+}
+
 }  // namespace gh3::native::scene

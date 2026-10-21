@@ -772,3 +772,22 @@ verde nas 10 transições, paridade visual com o build de referência, suíte `p
 **Se falhar:** comparar `GPU by pass` e `per frame` do build antigo e do novo no mesmo trecho (o
 `--gh3_native_gpu_profile=true` liga o detalhe por passe), não a média de uma corrida isolada. O log por
 swap (`gh3_native_swap_log=true`) mostra clear/resolve/alias/fence de cada quadro.
+
+
+## 9. Palco preto no Switch com a cena escalada (2026-10-21)
+
+- Sintoma (Switch, pacote do F5/T47): só pista, HUD e luzes; o palco aparece como silhuetas escuras.
+  Reproduzido no Mac com `--gh3_native_msaa=false --gh3_native_msaa_as_samples=false
+  --gh3_native_scene_scale=0.65`, com `linear` **e** `fsr1` (não é o FSR1); com escala 1.0, normal.
+- Causa: no caminho do T15 (padrão do Switch) o palco é desenhado na superfície MSAA do guest com 1 amostra
+  (pitch 640, ou seja 640x360 — já um quarto dos pixels) e espelhado no alvo 1x de pitch 1280. A escala do
+  T16/T31 troca esse alvo pela imagem escalada, e o espelho (`SyncAliasTarget`, que busca a superfície pela
+  chave do alvo, incluindo `scene_scaled`) não a alcança. Mesmo consertado, a escala quase não economizaria
+  GPU nesse caminho, porque o palco já está a 1 amostra.
+- Conserto: `scene::ScaleAllowed(host_msaa, msaa_as_samples)`; o renderer força escala 1.0 e loga
+  `scene scale off: incompatible with gh3_native_msaa_as_samples=false`; `switch/gh3.toml` com
+  `gh3_native_scene_scale = 1.0` e `gh3_native_scene_dynamic = false`. Testes em `tests/test_scene_scale.py`.
+- Lição de verificação: o aceite do T24/T31 rodou com a config do Mac (amostras como pixels), não com a do
+  Switch. **Validar sempre com as cvars do `switch/gh3.toml`** (sem a `vulkan_allow_present_mode_immediate`,
+  que o `run-gh3.command` já passa: flag repetida faz o runtime ignorar todas em silêncio). No zsh,
+  `$FLAGS` sem aspas não quebra em palavras — use um array do bash.

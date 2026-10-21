@@ -103,4 +103,5 @@ def test_renderer_wires_the_controller_and_logs_the_changes():
     assert '"[native] scene dynamic: enabled' in src
     assert '"[native] scene dynamic: {:g} -> {:g}' in src
     toml = open("switch/gh3.toml").read()
-    assert "gh3_native_scene_dynamic = true" in toml
+    # no Switch o palco vai a 1 amostra (msaa_as_samples=false) e a escala fica desligada (2026-10-21)
+    assert "gh3_native_scene_dynamic = false" in toml
