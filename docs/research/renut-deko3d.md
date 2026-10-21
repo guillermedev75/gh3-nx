@@ -65,9 +65,25 @@ Fontes lidas (só leitura, em `out/refs/`, fora do git): `masterspike52/reNut`, 
   fear-nx (NVK, nossa pilha) ficam em ~30. (Os números do Mark são da nossa pilha, NVK, não do deko3d.) Nenhum jogo 3D pesado medido a 60 em deko3d.
 - Arrisca: semanas de trabalho, regressões visuais, dependência de código de terceiros sem licença.
 
+## Teste da hipótese com o que já temos (2026-10-21)
+
+O deko3d só economiza o custo da *emulação* (resolves/cópias da EDRAM, blits de alias e de escala, overhead do
+driver); o custo de *desenhar* a cena (mesmos draws e shaders) fica. Separando o profiler de GPU por passe do
+Switch (`gh3_native_gpu_profile`, mediana dos blocos com total > 8 ms):
+
+| Corrida | GPU por quadro | passes de desenho | resolves |
+|---|---|---|---|
+| com sombra e bloom (`gh3_018`) | 28,5 ms | 24,6 ms | 2,7 ms (9 %) |
+| modo desempenho (`gh3_019`) | 13,5 ms | 11,6 ms | 1,6 ms (12 %) |
+
+Quase 90 % da GPU é o jogo desenhando (passe principal 720p: 7–11 ms). Teto do ganho de GPU do deko3d: ~10–12 %,
+mais o overhead de CPU do driver. Não leva a 60 FPS sozinho. Em aberto: qualidade do compilador de shaders (uam,
+do nouveau, contra o NAK do NVK) — só um teste com o mesmo shader nos dois diria. Onde está o ganho: menos trabalho
+no passe principal (menos pixels nele, shaders mais baratos, menos efeitos).
+
 ## Veredito
 
-**Condicional — tecnicamente viável, mas não começar agora.** A arquitetura casa (XDK D3D linkado
+**Condicional — tecnicamente viável, mas não compensa agora: o teto medido de ganho de GPU é ~10–12 %.** A arquitetura casa (XDK D3D linkado
 estaticamente, mesma ferramenta de codegen, a biblioteca D3D do GH3 já localizada), e é o único caminho que ataca
 a raiz dos nossos custos de GPU. Três condições antes de investir:
 
