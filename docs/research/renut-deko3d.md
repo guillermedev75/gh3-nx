@@ -61,9 +61,8 @@ Fontes lidas (só leitura, em `out/refs/`, fora do git): `masterspike52/reNut`, 
 
 - Ganha: some a emulação de PM4/EDRAM/resolves (onde estão nossos custos e os bugs dos T15/T16/T47); deko3d tem
   menos overhead de driver que o NVK; shaders já compilados (sem stutter de tradução).
-- Evidência de desempenho é **fraca para um jogo 3D pesado**: peggle1-nx faz 60 FPS, mas é 2D leve; o Mark diz ~30
-  FPS com o GH3 nessa pilha, limitado por CPU com a GPU a ~40% (relatado, não verificado); nfscarbon-nx e fear-nx
-  (NVK, nossa pilha) ficam em ~30. Nenhum jogo 3D pesado medido a 60 em deko3d.
+- Evidência de desempenho é **fraca para um jogo 3D pesado**: peggle1-nx faz 60 FPS, mas é 2D leve; nfscarbon-nx e
+  fear-nx (NVK, nossa pilha) ficam em ~30. (Os números do Mark são da nossa pilha, NVK, não do deko3d.) Nenhum jogo 3D pesado medido a 60 em deko3d.
 - Arrisca: semanas de trabalho, regressões visuais, dependência de código de terceiros sem licença.
 
 ## Veredito
@@ -72,8 +71,9 @@ Fontes lidas (só leitura, em `out/refs/`, fora do git): `masterspike52/reNut`, 
 estaticamente, mesma ferramenta de codegen, a biblioteca D3D do GH3 já localizada), e é o único caminho que ataca
 a raiz dos nossos custos de GPU. Três condições antes de investir:
 
-1. **Números do Mark** (log ou ms de GPU por quadro numa música). Se a GPU dele estiver mesmo a ~40%, é a melhor
-   evidência possível, no mesmo jogo.
+1. ~~Números do Mark~~ — **descartado (2026-10-21)**: o Mark esclareceu que usa a mesma pilha que nós (método do
+   nfsmw-nx: NVK + ReXGlue), não reNut/deko3d. Os "~30 FPS, CPU-bound, GPU ~40%" dele não dizem nada sobre o
+   deko3d. Continua faltando evidência de um jogo 3D pesado a 60 FPS nessa pilha.
 2. **Referência para nomear as funções**: o disco do Banjo N&B (ou outro jogo com as funções nomeadas no XDK
    próximo do 6132).
 3. **Permissão do masterspike52** para reutilizar o reNut.
