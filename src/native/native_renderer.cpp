@@ -146,6 +146,8 @@ REXCVAR_DEFINE_BOOL(gh3_native_async_pipelines, true, "GH3",
 REXCVAR_DEFINE_BOOL(gh3_native_swap_log, false, "GH3",
                     "Uma linha \"swap:\" por swap com frontbuffer, formato, clear, resolve, chave "
                     "do render target, alias_seq e espera de fence (F0.2 do plano de 60 FPS)");
+REXCVAR_DEFINE_UINT32(gh3_native_rt_trace, 0, "GH3",
+                      "DEPURACAO: loga passes, resolves e copias dos quadros [N, N+2) (0 = desligado)");
 REXCVAR_DEFINE_BOOL(gh3_native_format_log, false, "GH3",
                     "Uma linha \"format:\" por alvo criado com o VkFormat, o formato do guest, "
                     "16F, gamma, clear inicial, scene scale e alias (F0.4 do plano de 60 FPS)");
@@ -1643,13 +1645,7 @@ bool Renderer::Impl::Initialize() {
   multisample = REXCVAR_GET(gh3_native_msaa);
   msaa_as_samples = REXCVAR_GET(gh3_native_msaa_as_samples);
   scene_scale = scene::ClampScale(float(REXCVAR_GET(gh3_native_scene_scale)));
-  const bool scene_scale_allowed = scene::ScaleAllowed(multisample, msaa_as_samples);
-  if (!scene_scale_allowed && (scene::Enabled(scene_scale) || REXCVAR_GET(gh3_native_scene_dynamic))) {
-    REXLOG_WARN("[native] scene scale off: incompatible with gh3_native_msaa_as_samples=false "
-                "(the stage is already drawn at one sample per guest pixel)");
-    scene_scale = 1.0f;
-  }
-  if (scene_scale_allowed && REXCVAR_GET(gh3_native_scene_dynamic)) {
+  if (REXCVAR_GET(gh3_native_scene_dynamic)) {
     // T31: o piso do controlador é 0.65; a escala pedida só define por onde ele começa.
     scene_dynamic = std::make_unique<scene::DynamicScale>(scene::DynamicConfig(), scene_scale);
     scene_scale = float(scene_dynamic->scale());
@@ -2903,6 +2899,18 @@ void Renderer::Impl::RecordPipeline(uint64_t hash, const PipelineKey& key,
 
 // --- Render targets ------------------------------------------------------------------
 
+static std::string RtName(const RenderTarget* t) {
+  if (!t) return "-";
+  return fmt::format("{}b{}p{}{}{}{}[{}x{}]", t->key.is_depth ? "D" : "C", t->key.base_tiles, t->key.pitch,
+                     t->key.alias_msaa ? fmt::format("a{}", t->key.alias_msaa) : "",
+                     t->key.scene_scaled ? "S" : "", t->key.msaa ? "m" : "", t->width, t->height);
+}
+#define RT_TRACE(...)                                                                        \
+  do {                                                                                       \
+    const uint32_t _tf = REXCVAR_GET(gh3_native_rt_trace);                                   \
+    if (_tf && frame >= _tf && frame < _tf + 2) REXLOG_INFO("[rt] f{} " __VA_ARGS__);        \
+  } while (0)
+
 RenderTarget* Renderer::Impl::GetRenderTarget(const RenderTargetKey& key, uint32_t min_height) {
   RenderTarget* target = CreateOrGetRenderTarget(key, min_height);
   if (!target) return target;
@@ -2920,6 +2928,16 @@ RenderTarget* Renderer::Impl::GetRenderTarget(const RenderTargetKey& key, uint32
 // surface and reads (resolves, tests against) the 1x one.
 void Renderer::Impl::SyncAliasTarget(RenderTarget* target) {
   if (msaa_as_samples || multisample || target->key.alias_msaa) return;
+  // T15 + T16: o espelho do palco vai sempre para a imagem CHEIA. Pedida a escalada, atualiza a cheia;
+  // a sincronização da escala (SyncSceneTarget, chamada depois) a desce já com o palco. Copiar direto na
+  // escalada perdia para essa descida, e o espelho na cheia depois da subida apagava a cena (palco preto).
+  if (target->key.scene_scaled) {
+    RenderTargetKey full_key = target->key;
+    full_key.scene_scaled = 0;
+    auto it = render_targets.find(full_key);
+    if (it != render_targets.end()) SyncAliasTarget(it->second.get());
+    return;
+  }
   if (target->checked_clock == alias_clock) return;
   target->checked_clock = alias_clock;
   for (uint32_t guest_msaa = 1; guest_msaa <= 2; ++guest_msaa) {
@@ -2938,6 +2956,8 @@ void Renderer::Impl::SyncAliasTarget(RenderTarget* target) {
     if (!extent.valid) continue;
     BlitTarget(source, target, int32_t(extent.src_w), int32_t(extent.src_h), int32_t(extent.dst_w),
                int32_t(extent.dst_h), VK_FILTER_NEAREST);
+    // A cheia mudou: a escalada (se houver) tem de descê-la antes do próximo desenho nela.
+    target->scene_touch = ++scene_clock;
   }
 }
 
@@ -2945,6 +2965,7 @@ void Renderer::Impl::SyncAliasTarget(RenderTarget* target) {
 // quem escreveu antes e de quem lê depois (alias da T15 e imagem escalada da T16).
 void Renderer::Impl::BlitTarget(RenderTarget* source, RenderTarget* target, int32_t src_w,
                                 int32_t src_h, int32_t dst_w, int32_t dst_h, VkFilter filter) {
+  RT_TRACE("blit {} {}x{} -> {} {}x{}", frame, RtName(source), src_w, src_h, RtName(target), dst_w, dst_h);
   BeginRecording();
   EndPass();
   VkCommandBuffer c = cmd();
@@ -3317,6 +3338,7 @@ bool Renderer::Impl::EnsureSceneEasu(VkFormat format) {
 
 bool Renderer::Impl::EasuUpscale(RenderTarget* source, RenderTarget* target,
                                  const scene::SceneBlit& extent) {
+  RT_TRACE("easu {} -> {}", frame, RtName(source), RtName(target));
   if (!source || !target) return false;
   scene::EasuParams params =
       scene::EasuFor(extent.scaled_w, extent.scaled_h, source->width, source->height, extent.full_w,
@@ -3814,6 +3836,8 @@ void Renderer::Impl::RestoreTargetContent(RenderTarget* rt) {
 }
 
 bool Renderer::Impl::BeginPass(const PassTargets& targets, uint32_t wanted_height) {
+  RT_TRACE("pass c0={} c1={} d={} h={}", frame, RtName(targets.color[0]), RtName(targets.color[1]),
+           RtName(targets.depth), wanted_height);
   // F3.3: um alvo que entregou a imagem a um resolve volta a ser desenhado com loadOp LOAD, então o
   // conteúdo vem de volta antes do passe. Um clear inteiro (o do ZCULL) o dispensa.
   for (uint32_t i = 0; i < 4; ++i) {
@@ -5077,13 +5101,8 @@ void Renderer::Impl::Draw(const uint32_t* immediate_indices, uint32_t immediate_
     last_system = {submission_number, 0, nullptr, frame, system_offset};
   }
 
-  // T15/T16: a cached setup does not go through GetRenderTarget again.
-  if (scene::Enabled(scene_scale)) {
-    for (RenderTarget* t : {targets.color[0], targets.color[1], targets.color[2], targets.color[3],
-                            targets.depth}) {
-      if (t) SyncSceneTarget(t);
-    }
-  }
+  // T15/T16: a cached setup does not go through GetRenderTarget again. O espelho do palco (alias) vem
+  // antes da escala: ele atualiza a imagem cheia, que a sincronização da escala desce para a escalada.
   if (!msaa_as_samples && !multisample) {
     for (RenderTarget* t : {targets.color[0], targets.color[1], targets.color[2], targets.color[3],
                             targets.depth}) {
@@ -5093,6 +5112,12 @@ void Renderer::Impl::Draw(const uint32_t* immediate_indices, uint32_t immediate_
       } else {
         SyncAliasTarget(t);
       }
+    }
+  }
+  if (scene::Enabled(scene_scale)) {
+    for (RenderTarget* t : {targets.color[0], targets.color[1], targets.color[2], targets.color[3],
+                            targets.depth}) {
+      if (t) SyncSceneTarget(t);
     }
   }
 
@@ -5306,6 +5331,9 @@ void Renderer::Impl::Resolve() {
   }
   RenderTarget* source = GetRenderTarget(source_key, uint32_t(host_rect[3]));
   if (!source) return;
+  RT_TRACE("resolve src={} dest=0x{:08X} rect={},{} {}x{}", frame, RtName(source),
+           r[rex::graphics::XE_GPU_REG_RB_COPY_DEST_BASE], host_rect[0], host_rect[1], host_rect[2],
+           host_rect[3]);
   // F3.3: o conteúdo deste alvo pode estar no destino de um resolve anterior (a imagem foi entregue
   // a ele). Um resolve lê o alvo, então ele volta antes.
   if (source->content_address) {

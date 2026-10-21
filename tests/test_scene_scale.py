@@ -25,9 +25,6 @@ int main(int argc, char** argv) {
   if (!std::strcmp(argv[1], "qualifies")) {
     std::printf("%d\n", int(Qualifies(std::atoi(argv[3]), std::atoi(argv[4]), std::atoi(argv[5]), std::atoi(argv[6])))); return 0;
   }
-  if (!std::strcmp(argv[1], "allowed")) {
-    std::printf("%d\n", int(ScaleAllowed(std::atoi(argv[3]), std::atoi(argv[4])))); return 0;
-  }
   return 2;
 }
 """
@@ -104,22 +101,21 @@ def test_renderer_wires_the_cvar_and_logs_once():
     assert 'gh3_native_scene_scale, 1.0' in src  # padrão 1.0: Mac e paridade iguais
     assert '"scene scale {:g}: {}x{}"' in src or '[native] scene scale {:g}: {}x{}' in src
     assert "native_scene_scale.h" in src
-    assert "gh3_native_scene_scale = 1.0" in open("switch/gh3.toml").read()  # ver ScaleAllowed
+    assert "gh3_native_scene_scale = 0.65" in open("switch/gh3.toml").read()
 
 
-def test_scene_scale_is_off_on_the_one_sample_stage_path(exe):
-    # Regressão (2026-10-21, Switch): msaa_as_samples=false + escala < 1 -> palco preto (só silhuetas).
-    assert run(exe, "allowed", 1, 0, 0) == [0]   # caminho do T15 (Switch)
-    assert run(exe, "allowed", 1, 0, 1) == [1]   # amostras como pixels (Mac)
-    assert run(exe, "allowed", 1, 1, 0) == [1]   # MSAA de host
 
-
-def test_renderer_and_switch_config_never_combine_scale_with_the_one_sample_stage():
-    import re
+def test_stage_alias_reaches_the_scaled_scene_through_the_full_image():
+    # Regressão (2026-10-21, Switch): msaa_as_samples=false + escala < 1 -> palco preto (só silhuetas e luzes).
+    # O espelho do palco (T15) ia só para a imagem cheia, e depois da subida da cena escalada, apagando-a.
+    # Agora: pedida a escalada, o espelho atualiza a cheia (e a marca como tocada) e a escala a desce; no
+    # Draw() o espelho vem antes da escala.
     src = open("src/native/native_renderer.cpp").read()
-    assert "scene::ScaleAllowed(multisample, msaa_as_samples)" in src
-    assert "scene scale off: incompatible with gh3_native_msaa_as_samples=false" in src
+    body = src[src.find("void Renderer::Impl::SyncAliasTarget("):]
+    body = body[:body.find("\nvoid Renderer::Impl::", 10)]
+    assert "if (target->key.scene_scaled) {" in body and "full_key.scene_scaled = 0;" in body
+    assert "target->scene_touch = ++scene_clock;" in body
+    draw = src[src.find("T15/T16: a cached setup does not go through GetRenderTarget again"):]
+    assert draw.find("SyncAliasTarget(t);") < draw.find("SyncSceneTarget(t);")
     toml = open("switch/gh3.toml").read()
-    if re.search(r"^gh3_native_msaa_as_samples = false$", toml, re.M):
-        assert re.search(r"^gh3_native_scene_scale = 1\.0$", toml, re.M)
-        assert re.search(r"^gh3_native_scene_dynamic = false$", toml, re.M)
+    assert "gh3_native_scene_scale = 0.65" in toml and "gh3_native_msaa_as_samples = false" in toml
