@@ -332,3 +332,9 @@ as decisões (sempre com o porquê) e o que ficou pendente. Não apague entradas
 - pendente: RCAS pós-EASU (intermediário full-size); paridade fina com o LINEAR (a captura por marca cai em trechos diferentes da música); ganho de FPS no Switch (F5, a GPU é o limite); medição comparativa FSR1 vs CAS no aparelho.
 - 2026-10-20 07:30 T47 ✅ aceita (chat, sem runner)
 - 2026-10-20 23:55 T47 conserto (Claude): com `fsr1` a cena saía comprimida na vertical (~0,70) e preta embaixo — diagnóstico do DeepSeek reproduziu no Mac e isolou no caminho EASU. Causa: `input_size_inv` = 1/região (832x468), mas a imagem escalada tem 832x666 e o EASU usa UV normalizada → `EasuFor` agora recebe o tamanho da textura (`source->width/height`). Verificado: log `inv 0.00120192/0.0015015` (=1/832, 1/666), captura `out/parity/easu-fsr1.png` com o palco inteiro e a pista na altura do `linear` (white=0,000 stddev=56,6); teste de regressão novo; suíte 301 passed.
+
+### T52 — no chat (Claude, 2026-10-21)
+- feito: `tools/find_d3d_funcs.py` + `tests/test_find_d3d_funcs.py` (3); `docs/research/renut-deko3d.md` com o veredito. Fontes só lidas em `out/refs/` (reNut, peggle1-nx).
+- verificado: aceite exit 0; GH3 com XDK 2.0.6132 (cabeçalho do XEX); biblioteca D3D em 0x824B2A70–0x824D95E0; `D3DDevice_Swap = 0x824B2A70`, `Direct3D_CreateDevice = 0x824D0E20`; 2 de 359 funções do reNut ancoradas; `sub_824D0070` (a mais quente no Switch) é a espera do ring dentro da D3D.
+- decisões: aceite ajustado antes de rodar (o original pressupunha uma referência que não temos: a imagem do Banjo N&B); veredito **condicional** — números do Mark, imagem do Banjo para o d3d_match.py e permissão do masterspike52 (o reNut não tem licença) antes de qualquer código.
+- 2026-10-21 T52 ✅ aceita (chat)
