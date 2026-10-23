@@ -12,6 +12,11 @@
 
 namespace gh3::native::scene {
 
+// O controlador mede o intervalo entre swaps. Com a trava de quadro (gh3_min_frame_vblanks >= 2, ex.
+// 30 FPS) esse intervalo fica sempre no alvo da trava e não mostra folga: a escala só desceria. Só vale
+// sem trava.
+inline bool DynamicUsable(uint32_t min_frame_vblanks) { return min_frame_vblanks <= 1; }
+
 struct DynamicConfig {
   double target_ms = 16.7;       // orçamento de um quadro a 60 FPS
   double over_margin_ms = 1.0;   // acima disso o quadro está estourado (60 -> 56,8 FPS)

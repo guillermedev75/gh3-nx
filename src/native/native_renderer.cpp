@@ -87,6 +87,7 @@ namespace shaders {
 #include "native_textures.h"
 
 REXCVAR_DECLARE(bool, gpu_specialize_texture_signs);
+REXCVAR_DECLARE(uint32_t, gh3_min_frame_vblanks);
 REXCVAR_DEFINE_BOOL(gh3_native_depth24, false, "GH3",
                     "Store depth in 32 bits per pixel (24-bit depth with stencil, or float "
                     "without) instead of 32-bit float with stencil, which NVIDIA GPUs keep "
@@ -1645,7 +1646,13 @@ bool Renderer::Impl::Initialize() {
   multisample = REXCVAR_GET(gh3_native_msaa);
   msaa_as_samples = REXCVAR_GET(gh3_native_msaa_as_samples);
   scene_scale = scene::ClampScale(float(REXCVAR_GET(gh3_native_scene_scale)));
-  if (REXCVAR_GET(gh3_native_scene_dynamic)) {
+  const bool dynamic_usable = scene::DynamicUsable(REXCVAR_GET(gh3_min_frame_vblanks));
+  if (REXCVAR_GET(gh3_native_scene_dynamic) && !dynamic_usable) {
+    REXLOG_WARN("[native] scene dynamic off: frame cap (gh3_min_frame_vblanks = {}) hides the headroom; "
+                "fixed scene scale {:g}",
+                REXCVAR_GET(gh3_min_frame_vblanks), scene_scale);
+  }
+  if (REXCVAR_GET(gh3_native_scene_dynamic) && dynamic_usable) {
     // T31: o piso do controlador é 0.65; a escala pedida só define por onde ele começa.
     scene_dynamic = std::make_unique<scene::DynamicScale>(scene::DynamicConfig(), scene_scale);
     scene_scale = float(scene_dynamic->scale());

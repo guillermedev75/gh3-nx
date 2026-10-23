@@ -19,6 +19,7 @@
 //     stages.
 
 #include "gh3_native_system.h"
+#include "../frame_cap.h"
 #include "../guest_pacing_stats.h"
 #include "native_present_wait.h"
 #include "native_renderer.h"
@@ -71,6 +72,11 @@ REXCVAR_DEFINE_UINT32(gh3_min_frame_vblanks, 1, "GH3",
                       "Native renderer: minimum 60 Hz vblanks between frames (1 = the game's "
                       "own pacing, 2 = an even 30 fps)");
 
+REXCVAR_DEFINE_UINT32(gh3_frame_vblanks_handheld, 1, "GH3",
+                      "No Switch portátil: mínimo de vblanks entre quadros (2 = 30 FPS cravados)");
+REXCVAR_DEFINE_UINT32(gh3_frame_vblanks_docked, 1, "GH3",
+                      "No Switch no dock: mínimo de vblanks entre quadros (1 = 60 FPS)");
+
 REXCVAR_DEFINE_STRING(gh3_renderer, "xenos", "GH3",
                       "xenos = the SDK's emulated Xbox 360 GPU; native = the native renderer "
                       "(in development: stage A presents a test colour)")
@@ -80,6 +86,7 @@ REXCVAR_DEFINE_STRING(gh3_renderer, "xenos", "GH3",
 #if defined(__SWITCH__)
 extern "C" {
 #include <switch/kernel/svc.h>
+#include <switch/services/applet.h>
 }
 extern "C" void RexGmSetReadOnlyMapped(bool enabled);
 // The frame counter the console FPS overlay and the profiler read (the
@@ -1213,8 +1220,28 @@ class NativeGraphicsSystem final : public rex::system::IGraphicsSystem {
   // next one, if a little over budget, 50 ms later, a short gap then a long
   // one, felt as a hitch even at 30 fps on average. Held before it, presents
   // are evenly spaced, and the interrupt still follows the present.
+  // Trava por modo (src/frame_cap.h): consulta portátil/dock a cada ~64 quadros e troca na hora.
+  uint32_t FrameVblanks() {
+    uint32_t floor = REXCVAR_GET(gh3_min_frame_vblanks);
+#if defined(__SWITCH__)
+    if ((frame_mode_poll_++ & 63) == 0) {
+      const bool docked = appletGetOperationMode() == AppletOperationMode_Console;
+      const uint32_t v = gh3::frame_cap::Vblanks(docked, REXCVAR_GET(gh3_frame_vblanks_handheld),
+                                                 REXCVAR_GET(gh3_frame_vblanks_docked), floor);
+      if (v != frame_vblanks_) {
+        REXLOG_INFO("[gh3] frame cap: {} -> {} fps ({} vblank{})", docked ? "docked" : "handheld",
+                    60 / v, v, v > 1 ? "s" : "");
+        frame_vblanks_ = v;
+      }
+    }
+    return frame_vblanks_ ? frame_vblanks_ : std::max<uint32_t>(1, floor);
+#else
+    return std::max<uint32_t>(1, floor);
+#endif
+  }
+
   void PaceFrame() {
-    const uint32_t min_vblanks = REXCVAR_GET(gh3_min_frame_vblanks);
+    const uint32_t min_vblanks = FrameVblanks();
     if (min_vblanks > 1 && last_swap_vblank_) {
       const uint64_t target = last_swap_vblank_ + min_vblanks;
       if (REXCVAR_GET(gh3_pace_before_present) &&
@@ -1454,6 +1481,8 @@ class NativeGraphicsSystem final : public rex::system::IGraphicsSystem {
   // Vblanks delivered, and the vblank of the last swap-complete interrupt.
   std::atomic<uint64_t> vblanks_{0};
   uint64_t last_swap_vblank_ = 0;
+  uint32_t frame_mode_poll_ = 0;
+  uint32_t frame_vblanks_ = 0;
   Clock::time_point frame_start_{};
   uint64_t frame_start_wait_ns_ = 0, frame_start_pipelines_ = 0, frame_start_shaders_ = 0,
            frame_start_textures_ = 0, frame_start_created_ = 0;

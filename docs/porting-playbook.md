@@ -824,3 +824,25 @@ swap (`gh3_native_swap_log=true`) mostra clear/resolve/alias/fence de cada quadr
   XDK no `default.xex` (tarefa T52).
 - **`jillsandwich1998/reGH2`** (Guitar Hero II, PC/Linux): menu próprio com DLC, controles e contador de FPS.
   Motor da Harmonix (≠ Neversoft), então serve como ideia de UX, não como código.
+
+
+## 11. Ritmo dos quadros: 30 cravados no portátil, 60 no dock (2026-10-23)
+
+- Comparação com o port do Mark (`markaurel13/guitarhero3_nx`, base sa2-nx, NVK; log `gh3recomp_003.log`):
+  mesma GPU a 460,8 MHz, **~10,9 ms de GPU por quadro** (mediana) com sombras, luzes volumétricas, bloom,
+  reflexos em cubemap e pré-passe de profundidade cortados; **travado em 30** (`swap_interval = 2`), com
+  **95,5 % dos quadros em 33 ms cravados** (2,9 % em 20 FPS). O nosso, solto entre 30 e 40, parecia menos jogável:
+  num jogo de ritmo, quadro irregular pesa mais que FPS.
+- Já existia o limitador do project8-sw (`gh3_min_frame_vblanks`, `PaceFrame`), sem o bug de dormir um quadro a
+  mais (atrasado → segue na hora e reancora no vblank atual). Novo: trava **por modo** (`src/frame_cap.h`):
+  `gh3_frame_vblanks_handheld = 2` (30) e `gh3_frame_vblanks_docked = 1` (60), com `appletGetOperationMode()`
+  consultado a cada ~64 quadros (encaixar/tirar do dock troca na hora; log `[gh3] frame cap: docked -> 60 fps`).
+  `gh3_pace_before_present = true` segura o quadro antes de apresentar (quadros igualmente espaçados).
+- Por que 60 no dock é provável: a GPU vai de 460,8 para 768 MHz (1,67x) e a memória para 1600 MHz; a lógica do
+  jogo na CPU gasta ~6–9 ms. No portátil, 60 estável depende de baixar a GPU para < 16,7 ms também nos picos.
+- O controlador de escala dinâmica mede o intervalo entre swaps; sob trava esse intervalo fica no alvo e não mostra
+  folga (a escala só desceria). `scene::DynamicUsable` o desliga com trava global. Cena fixa em 0.65 + FSR1.
+- Medido no Mac com a trava de 30: 30,0 swaps/s, mediana 33,0 ms, 0,8 % dos quadros acima de 50 ms.
+- Outras ideias do código do Mark (sem licença: só os fatos sobre o jogo, implementar do nosso jeito): resolves que
+  ninguém lê (`0x0BEEC000`, `0x0C2C0000`, bloom em `0x0C668000`, cubemaps em `0x080C0000`–`0x085E0000`) e o
+  pré-passe de profundidade (modo 4, sem cor).
