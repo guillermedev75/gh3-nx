@@ -6,7 +6,7 @@ import pytest
 
 # Trava de quadro por modo (2026-10-23). Num jogo de ritmo, quadro irregular pesa mais que FPS: o port do Mark
 # (sa2-nx, travado em 30) tem 95,5% dos quadros em 33 ms cravados e é mais jogável que o nosso solto entre 30 e
-# 40. No portátil, 30 cravados; no dock (GPU 768 MHz), 60. Cena fixa em 0.65 com FSR1 nos dois.
+# 40. No portátil, 30 cravados; no dock (GPU 768 MHz), 60. Cena a 1.0 (a 0.65 ficou mais cara no Switch).
 
 MAIN = r"""
 #include "frame_cap.h"
@@ -61,8 +61,8 @@ def test_switch_config_caps_handheld_at_30_and_docked_at_60_with_scene_at_065():
     assert k["gh3_frame_vblanks_handheld"] == "2" and k["gh3_frame_vblanks_docked"] == "1"
     assert k["gh3_pace_before_present"] == "true"
     assert k.get("gh3_min_frame_vblanks", "1") == "1"
-    # cena fixa em 0.65 com FSR1 (decisão do Guillerme, 2026-10-23)
-    assert k["gh3_native_scene_scale"] == "0.65" and k["gh3_native_scene_dynamic"] == "false"
+    # cena a 1.0: a 0.65 a GPU do portátil foi a ~23 ms contra 13,5 ms (medido, 2026-10-23)
+    assert k["gh3_native_scene_scale"] == "1.0" and k["gh3_native_scene_dynamic"] == "false"
     assert k["gh3_native_scene_upscale"] == '"fsr1"'
 
 

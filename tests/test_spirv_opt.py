@@ -193,9 +193,11 @@ def test_renderer_uses_the_optimizer_behind_a_cvar_off_by_default():
     assert "TakeSpirvOptReport()" in (RAIZ / "src" / "native" / "gh3_native_system.cpp").read_text()
 
 
-def test_switch_package_turns_the_optimizer_on():
+def test_switch_package_keeps_the_optimizer_off_until_it_is_cached():
+    # Medido no Switch (2026-10-23): ~40 s de boot com um núcleo a 100% e o áudio da intro cortando; ganho de
+    # GPU nunca medido. Desligado até o resultado ir para cache.
     toml = (RAIZ / "switch" / "gh3.toml").read_text()
-    assert "\ngh3_native_spirv_opt = true\n" in toml
+    assert "\ngh3_native_spirv_opt = false\n" in toml
 
 
 def test_build_links_the_optimizer_on_both_toolchains():

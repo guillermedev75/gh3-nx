@@ -101,7 +101,7 @@ def test_renderer_wires_the_cvar_and_logs_once():
     assert 'gh3_native_scene_scale, 1.0' in src  # padrão 1.0: Mac e paridade iguais
     assert '"scene scale {:g}: {}x{}"' in src or '[native] scene scale {:g}: {}x{}' in src
     assert "native_scene_scale.h" in src
-    assert "gh3_native_scene_scale = 0.65" in open("switch/gh3.toml").read()
+    assert "gh3_native_scene_scale = 1.0" in open("switch/gh3.toml").read()  # medido: 0.65 pior no Switch
 
 
 
@@ -118,4 +118,4 @@ def test_stage_alias_reaches_the_scaled_scene_through_the_full_image():
     draw = src[src.find("T15/T16: a cached setup does not go through GetRenderTarget again"):]
     assert draw.find("SyncAliasTarget(t);") < draw.find("SyncSceneTarget(t);")
     toml = open("switch/gh3.toml").read()
-    assert "gh3_native_scene_scale = 0.65" in toml and "gh3_native_msaa_as_samples = false" in toml
+    assert "gh3_native_msaa_as_samples = false" in toml

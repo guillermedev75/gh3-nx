@@ -50,9 +50,11 @@ gh3_vblank_late_no_wait = false
 # excessivo do T9 era o bloom). false volta os dois efeitos.
 gh3_native_skip_shadows = true
 gh3_native_skip_bloom = true
-# Cena 3D abaixo da resolução da HUD (o passe principal com profundidade é o maior custo de GPU no
-# Switch; src/native/native_scene_scale.h). 1.0 desliga.
-gh3_native_scene_scale = 0.65
+# Cena 3D abaixo da resolução da HUD (src/native/native_scene_scale.h). 1.0 desliga. Medido no Switch
+# (2026-10-23, portátil 460,8 MHz): a 0.65 a GPU foi a ~23 ms por quadro contra 13,5 ms a 1.0 — a cena fica
+# 3 ms mais barata, mas as cópias de profundidade entre a imagem cheia e a escalada custam 5 ms e ~20
+# draws de efeitos perdem a profundidade (sem early-z). Volta quando essas cópias saírem.
+gh3_native_scene_scale = 1.0
 # Controlador dinâmico 0.65-1.0 em passos de 0.05 para caber em 16.7 ms (histerese de 3 quadros e 0.6 s
 # no mesmo nível; src/native/native_scene_dynamic.h). A escala acima é só o ponto de partida.
 gh3_native_scene_dynamic = false
@@ -63,9 +65,11 @@ gh3_native_scene_dynamic = false
 gh3_native_scene_upscale = "fsr1"
 gh3_native_scene_cas = false
 gh3_native_scene_cas_sharpness = 0.2
-# spirv-opt nos shaders traduzidos (F2.2/T35): valida e otimiza cada módulo antes do driver; em
-# falha usa o original. O ganho é GPU (o NAK compila menos instruções), medido no Switch.
-gh3_native_spirv_opt = true
+# spirv-opt nos shaders traduzidos (F2.2/T35). Desligado no Switch (2026-10-23): roda a cada abertura em
+# ~164 shaders junto com o pré-aquecimento de pipelines, prende um núcleo a 100% por ~40 s, deixa a intro
+# a ~9 FPS e corta o áudio (2 s com, 2 s sem); o ganho de GPU nunca foi medido no aparelho. Voltar só com o
+# resultado em cache.
+gh3_native_spirv_opt = false
 gh3_native_shader_simplify = true
 # Loga a contagem de cedências a cada 4096. Diagnóstico.
 gh3_guest_waits_stats = false

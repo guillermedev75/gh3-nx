@@ -846,3 +846,28 @@ swap (`gh3_native_swap_log=true`) mostra clear/resolve/alias/fence de cada quadr
 - Outras ideias do código do Mark (sem licença: só os fatos sobre o jogo, implementar do nosso jeito): resolves que
   ninguém lê (`0x0BEEC000`, `0x0C2C0000`, bloom em `0x0C668000`, cubemaps em `0x080C0000`–`0x085E0000`) e o
   pré-passe de profundidade (modo 4, sem cor).
+
+
+## 12. Medido no Switch: escala 0.65 mais cara que 1.0; spirv-opt prende o boot (2026-10-23)
+
+Corrida de diagnóstico (NRO `0.5.0-34a09aa`, perfil de GPU por passe com segmentos novos para blits e EASU),
+portátil a 460,8 MHz, cena a 0.65, sombra/bloom cortados. GPU por quadro (mediana, ms):
+
+| parte | 0.65 (hoje) | 1.0 (2026-10-18, `gh3_019`) |
+|---|---|---|
+| passes 720p **sem** profundidade (efeitos, HUD) | 10,6 (30 draws) | 3,2 (9 draws) |
+| cena 3D | 4,3 (832x468) | ~7,2 (720p) |
+| blits de **profundidade** cheia ↔ escalada | 5,0 | — |
+| total | ~23 | 13,5 |
+
+- A escala economiza ~3 ms na cena, mas as cópias de profundidade (vkCmdBlitImage de D24S8 é caro no NVK) e
+  ~20 draws de efeitos que passam a ir sem profundidade (sem early-z, cada pixel desenhado) custam mais.
+  Decisão: **cena a 1.0** no portátil e no dock até eliminar essas cópias e manter os efeitos no passe com
+  profundidade. O EASU não apareceu no perfil: o alvo de cor do Switch não é R8G8B8A8, o upscale caiu no LINEAR.
+- **Boot de ~40 s e áudio da intro cortando (2 s com, 2 s sem):** o thread `main (interfaz)` a 100 % com o
+  pré-aquecimento de 158 pipelines (do cache do driver) + `spirv-opt` em 164 shaders **a cada abertura**; a intro
+  cai a ~9 FPS e o áudio fica sem dados (96 pedidos vazios em 10 s). `gh3_native_spirv_opt = false` no Switch
+  até o resultado ir para cache (o ganho de GPU dele nunca foi medido no aparelho).
+- Dock (768 MHz): ~9–10 ms de GPU e 50–58 FPS na maior parte; picos de 15–22 ms nos trechos pesados.
+- Conserto junto: a APM registrava o modo de 460,8 MHz só para o modo atual; aberto no dock e tirado depois, o
+  portátil ficava a 307,2 MHz. Agora sempre para `ApmPerformanceMode_Normal`.
