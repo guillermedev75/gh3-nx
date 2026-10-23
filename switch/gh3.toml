@@ -65,11 +65,11 @@ gh3_native_scene_dynamic = false
 gh3_native_scene_upscale = "fsr1"
 gh3_native_scene_cas = false
 gh3_native_scene_cas_sharpness = 0.2
-# spirv-opt nos shaders traduzidos (F2.2/T35). Desligado no Switch (2026-10-23): roda a cada abertura em
-# ~164 shaders junto com o pré-aquecimento de pipelines, prende um núcleo a 100% por ~40 s, deixa a intro
-# a ~9 FPS e corta o áudio (2 s com, 2 s sem); o ganho de GPU nunca foi medido no aparelho. Voltar só com o
-# resultado em cache.
-gh3_native_spirv_opt = false
+# spirv-opt nos shaders traduzidos (F2.2/T35). OBRIGATÓRIO no Switch: sem ele o NAK leva segundos por pipeline
+# (quadros de 13-29 s, tela preta após a intro; medido 2026-10-23). O custo é no boot: roda a cada abertura
+# junto com o pré-aquecimento (~40 s com um núcleo a 100 %, intro lenta e áudio cortando) — o conserto é
+# guardar o resultado em cache, não desligar.
+gh3_native_spirv_opt = true
 gh3_native_shader_simplify = true
 # Loga a contagem de cedências a cada 4096. Diagnóstico.
 gh3_guest_waits_stats = false

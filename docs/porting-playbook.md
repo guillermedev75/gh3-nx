@@ -866,8 +866,11 @@ portátil a 460,8 MHz, cena a 0.65, sombra/bloom cortados. GPU por quadro (media
   profundidade. O EASU não apareceu no perfil: o alvo de cor do Switch não é R8G8B8A8, o upscale caiu no LINEAR.
 - **Boot de ~40 s e áudio da intro cortando (2 s com, 2 s sem):** o thread `main (interfaz)` a 100 % com o
   pré-aquecimento de 158 pipelines (do cache do driver) + `spirv-opt` em 164 shaders **a cada abertura**; a intro
-  cai a ~9 FPS e o áudio fica sem dados (96 pedidos vazios em 10 s). `gh3_native_spirv_opt = false` no Switch
-  até o resultado ir para cache (o ganho de GPU dele nunca foi medido no aparelho).
+  cai a ~9 FPS e o áudio fica sem dados (96 pedidos vazios em 10 s).
+- **Desligar o spirv-opt NÃO serve** (testado no mesmo dia): o boot fica rápido, mas sem ele o NAK leva
+  **segundos por pipeline** (quadros de 29 s com 14 pipelines e 13,5 s com 5) e a tela fica preta após a intro.
+  O SPIR-V do tradutor é grande demais para o NAK sem otimização. Conserto certo: guardar a saída do spirv-opt
+  em cache no SD (chave = hash do módulo de entrada) para o boot não refazer o trabalho.
 - Dock (768 MHz): ~9–10 ms de GPU e 50–58 FPS na maior parte; picos de 15–22 ms nos trechos pesados.
 - Conserto junto: a APM registrava o modo de 460,8 MHz só para o modo atual; aberto no dock e tirado depois, o
   portátil ficava a 307,2 MHz. Agora sempre para `ApmPerformanceMode_Normal`.
