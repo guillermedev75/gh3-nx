@@ -68,6 +68,7 @@ extern "C" {
 #include "native_scene_dynamic.h"
 #include "native_scene_cas.h"
 #include "native_scene_upscale.h"
+#include "native_spirv_cache.h"
 #include "native_spirv_opt.h"
 #include "native_shader_simplify.h"
 #include "native_pipeline_prewarm.h"
@@ -1530,6 +1531,10 @@ struct Renderer::Impl {
   std::mutex optimized_modules_mutex;
   std::unordered_map<VulkanShader::VulkanTranslation*, VkShaderModule> optimized_shader_modules;
   std::mutex spirv_opt_stats_mutex;
+  // Cache em disco do SPIR-V simplificado/otimizado (native_spirv_cache.h); vazio = sem cache.
+  std::filesystem::path spirv_cache_dir;
+  std::atomic<uint32_t> spirv_cache_hits{0};
+  std::atomic<uint32_t> spirv_cache_stores{0};
   spirv_opt::Stats spirv_opt_stats;
   shader_simplify::Stats shader_simplify_stats;
   std::atomic<uint32_t> spirv_opt_fallbacks_logged{0};
@@ -2507,7 +2512,20 @@ VkShaderModule Renderer::Impl::ShaderModuleFor(VulkanShader::VulkanTranslation* 
     std::memcpy(binary.data(), bytes.data(), binary.size() * sizeof(uint32_t));
   }
   bool changed = false;
-  if (simplify_shader) {
+  // A partir da segunda abertura o resultado vem do SD: sem simplificar nem otimizar de novo.
+  const uint64_t cache_key =
+      spirv_cache_dir.empty() ? 0 : spirv_cache::Key(binary, simplify_shader, optimize_shader);
+  bool from_cache = false;
+  if (cache_key) {
+    std::vector<uint32_t> cached;
+    if (spirv_cache::Load(spirv_cache_dir, cache_key, &cached)) {
+      binary = std::move(cached);
+      changed = true;
+      from_cache = true;
+      spirv_cache_hits.fetch_add(1, std::memory_order_relaxed);
+    }
+  }
+  if (!from_cache && simplify_shader) {
     const shader_simplify::Outcome outcome = shader_simplify::Simplify(binary);
     {
       std::lock_guard<std::mutex> lock(spirv_opt_stats_mutex);
@@ -2526,7 +2544,7 @@ VkShaderModule Renderer::Impl::ShaderModuleFor(VulkanShader::VulkanTranslation* 
       changed = true;
     }
   }
-  if (optimize_shader) {
+  if (!from_cache && optimize_shader) {
     const spirv_opt::Outcome outcome = spirv_opt::Optimize(binary);
     {
       std::lock_guard<std::mutex> lock(spirv_opt_stats_mutex);
@@ -2544,6 +2562,10 @@ VkShaderModule Renderer::Impl::ShaderModuleFor(VulkanShader::VulkanTranslation* 
     } else if (outcome.optimized) {
       changed = true;
     }
+  }
+  if (cache_key && changed && !from_cache &&
+      spirv_cache::Store(spirv_cache_dir, cache_key, binary)) {
+    spirv_cache_stores.fetch_add(1, std::memory_order_relaxed);
   }
   VkShaderModule module = VK_NULL_HANDLE;
   if (changed) {
@@ -6265,6 +6287,8 @@ void Renderer::InitializeDriverCache(const std::filesystem::path& cache_root,
                                                  title_id, properties.vendorID, properties.deviceID,
                                                  properties.driverVersion, cache_version);
   im.prewarm_path = directory / prewarm::CacheFileName(cache_version);
+  // Antes do pré-aquecimento, que é quem mais traduz shaders na abertura.
+  im.spirv_cache_dir = cache_root / "shaders" / "spirv";
   // The newest complete file: the rename that replaces it can fail on Horizon
   // (it does not overwrite), leaving the data in .tmp.
   std::vector<uint8_t> data;
@@ -6374,14 +6398,17 @@ std::string Renderer::TakeSpirvOptReport() {
     return std::string();
   }
   std::lock_guard<std::mutex> lock(impl_->spirv_opt_stats_mutex);
-  if (!impl_->spirv_opt_stats.shaders) {
+  if (!impl_->spirv_opt_stats.shaders && !impl_->spirv_cache_hits.load(std::memory_order_relaxed)) {
     return std::string();
   }
   // Cumulativo: o relatório de 10 s volta a linha enquanto houver shaders, como as outras linhas
   // "[native] last 10 s" (não some quando um intervalo não traduziu nada).
-  return fmt::format("spirv-opt: {} shaders, {:.1f}% fewer instructions ({} fallbacks)",
+  return fmt::format("spirv-opt: {} shaders, {:.1f}% fewer instructions ({} fallbacks) | spirv cache: {} "
+                     "hits, {} stored",
                      impl_->spirv_opt_stats.shaders, impl_->spirv_opt_stats.FewerPercent(),
-                     impl_->spirv_opt_stats.fallbacks);
+                     impl_->spirv_opt_stats.fallbacks,
+                     impl_->spirv_cache_hits.load(std::memory_order_relaxed),
+                     impl_->spirv_cache_stores.load(std::memory_order_relaxed));
 }
 
 std::string Renderer::TakePrewarmReport() {
