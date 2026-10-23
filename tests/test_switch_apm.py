@@ -56,3 +56,13 @@ def test_cvar_defaults_true_and_marker_logged():
 def test_app_wires_apm_and_nro_links_it():
     app = (ROOT / "src" / "gh3_app.h").read_text()
     assert "switch_apm.h" in app and "gh3::apm::" in app
+
+
+def test_handheld_boost_is_registered_even_when_the_game_starts_docked():
+    # Regressão (2026-10-23, Switch): aberto no dock e tirado depois, o portátil ficou a 307,2 MHz ("sem
+    # alteração (modo 1)"). A configuração da APM vale por modo: registra-se a do portátil (Normal) sempre, e o
+    # sistema a aplica quando sair do dock.
+    src = open("src/switch_apm.h").read()
+    assert "apmSetPerformanceConfiguration(ApmPerformanceMode_Normal, want)" in src
+    assert "apmGetPerformanceConfiguration(ApmPerformanceMode_Normal, &g_previous)" in src
+    assert "ChooseConfiguration(Mode::Handheld" in src

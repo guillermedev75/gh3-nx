@@ -31,25 +31,27 @@ inline void Apply() {
     REXLOG_WARN("apm performance configuration: apmInitialize falhou");
     return;
   }
-  ApmPerformanceMode mode = ApmPerformanceMode_Invalid;
-  if (R_FAILED(apmGetPerformanceMode(&mode))) mode = ApmPerformanceMode_Invalid;
-  const uint32_t want = ChooseConfiguration(
-      mode == ApmPerformanceMode_Boost ? Mode::Docked : Mode::Handheld,
-      REXCVAR_GET(gh3_switch_gpu_boost));
-  if (mode == ApmPerformanceMode_Invalid || !want) {
-    REXLOG_INFO("apm performance configuration: sem alteração (modo {})", static_cast<int>(mode));
+  // A configuração vale por modo: registra-se a do portátil (Normal) mesmo com o jogo aberto no dock, e o
+  // sistema a aplica ao sair do dock. Pedir para o modo atual deixava o portátil a 307,2 MHz quando o jogo
+  // abria no dock (2026-10-23).
+  ApmPerformanceMode current = ApmPerformanceMode_Invalid;
+  if (R_FAILED(apmGetPerformanceMode(&current))) current = ApmPerformanceMode_Invalid;
+  const uint32_t want = ChooseConfiguration(Mode::Handheld, REXCVAR_GET(gh3_switch_gpu_boost));
+  if (!want) {
+    REXLOG_INFO("apm performance configuration: sem alteração (boost desligado)");
     apmExit();
     return;
   }
-  if (R_FAILED(apmGetPerformanceConfiguration(mode, &g_previous))) g_previous = 0;
-  if (R_FAILED(apmSetPerformanceConfiguration(mode, want))) {
+  if (R_FAILED(apmGetPerformanceConfiguration(ApmPerformanceMode_Normal, &g_previous))) g_previous = 0;
+  if (R_FAILED(apmSetPerformanceConfiguration(ApmPerformanceMode_Normal, want))) {
     REXLOG_WARN("apm performance configuration 0x{:08X}: recusada pelo sistema", want);
     apmExit();
     return;
   }
-  g_mode = mode;
+  g_mode = ApmPerformanceMode_Normal;
   g_active = true;
-  REXLOG_INFO("apm performance configuration 0x{:08X} (anterior 0x{:08X})", want, g_previous);
+  REXLOG_INFO("apm performance configuration 0x{:08X} para o portátil (anterior 0x{:08X}, modo atual {})", want,
+              g_previous, static_cast<int>(current));
 }
 
 inline void Restore() {

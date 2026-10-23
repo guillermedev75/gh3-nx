@@ -599,7 +599,7 @@ struct Renderer::Impl {
   uint32_t profiled_frames = 0;
   double profiled_ns = 0;
   // Kinds, in the key's top 4 bits.
-  enum : uint64_t { kProfileOther = 0, kProfilePass = 1, kProfileResolve = 2 };
+  enum : uint64_t { kProfileOther = 0, kProfilePass = 1, kProfileResolve = 2, kProfileCopy = 3 };
   static uint64_t ProfileTargetBits(const RenderTarget* rt) {
     if (!rt) return 0xFFFFFF;
     return (uint64_t(rt->key.base_tiles & 0xFFF) << 12) | (uint64_t(rt->key.pitch & 0x7FF) << 1) |
@@ -2154,6 +2154,14 @@ void Renderer::Impl::ProfileReport() {
         what = fmt::format("resolve{} p{} {}x{}", ((key >> 56) & 1) ? " depth" : "",
                            (key >> 32) & 0x7FF, (key >> 16) & 0xFFFF, key & 0xFFFF);
         break;
+      case kProfileCopy: {
+        // Cópias entre alvos (alias do T15, descida/subida da cena do T16) e o EASU do FSR1.
+        static const char* kKinds[] = {"blit", "easu", "cas"};
+        const uint64_t kind = (key >> 56) & 0xF;
+        what = fmt::format("{} {}x{}{}", kind < 3 ? kKinds[kind] : "copy", (key >> 16) & 0xFFFF, key & 0xFFFF,
+                           ((key >> 55) & 1) ? " depth" : "");
+        break;
+      }
       default:
         what = "other";
         break;
@@ -2974,6 +2982,9 @@ void Renderer::Impl::BlitTarget(RenderTarget* source, RenderTarget* target, int3
                                 int32_t src_h, int32_t dst_w, int32_t dst_h, VkFilter filter) {
   RT_TRACE("blit {} {}x{} -> {} {}x{}", frame, RtName(source), src_w, src_h, RtName(target), dst_w, dst_h);
   BeginRecording();
+  ProfileMark((kProfileCopy << 60) | (uint64_t(target->key.is_depth & 1) << 55) |
+              ((uint64_t(dst_w) & 0xFFFF) << 16) | (uint64_t(dst_h) & 0xFFFF));
+  BeginRecording();
   EndPass();
   VkCommandBuffer c = cmd();
   VkMemoryBarrier before = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
@@ -3346,6 +3357,9 @@ bool Renderer::Impl::EnsureSceneEasu(VkFormat format) {
 bool Renderer::Impl::EasuUpscale(RenderTarget* source, RenderTarget* target,
                                  const scene::SceneBlit& extent) {
   RT_TRACE("easu {} -> {}", frame, RtName(source), RtName(target));
+  BeginRecording();
+  ProfileMark((kProfileCopy << 60) | (uint64_t(1) << 56) | ((uint64_t(target->width) & 0xFFFF) << 16) |
+              (uint64_t(target->height) & 0xFFFF));
   if (!source || !target) return false;
   scene::EasuParams params =
       scene::EasuFor(extent.scaled_w, extent.scaled_h, source->width, source->height, extent.full_w,
