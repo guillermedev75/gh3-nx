@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -175,6 +176,41 @@ inline bool Parse(const uint8_t* data, size_t size, uint32_t expected_version, M
   if (offset != size) return false;
   return true;
 }
+
+// Quanto o prewarm pode fazer num quadro sem segurar o jogo: o custo de uma entrada é medido das
+// que já passaram (média móvel) e o plano leva o que cabe no orçamento do quadro, com o mínimo de
+// uma entrada para haver progresso e o máximo de `max_batch` por quadro. Uma entrada mais cara que
+// o orçamento inteiro ainda é levada: parar por causa dela significaria nunca terminar.
+class Budget {
+ public:
+  Budget(double budget_ms, uint32_t max_batch) : budget_ms_(budget_ms), max_batch_(max_batch) {}
+
+  uint32_t Take(uint32_t pending) const {
+    if (!pending || max_batch_ == 0) return 0;
+    uint32_t fits = max_batch_;
+    if (samples_ && average_ms_ > 0.0) {
+      const double budget = budget_ms_ > 0.0 ? budget_ms_ : 0.0;
+      fits = uint32_t(budget / average_ms_);
+      if (fits == 0) fits = 1;
+    }
+    return std::min(pending, std::min(fits, max_batch_));
+  }
+
+  void Record(double ms) {
+    if (ms < 0.0) ms = 0.0;
+    ++samples_;
+    average_ms_ += (ms - average_ms_) / double(samples_);
+  }
+
+  double Average() const { return average_ms_; }
+  uint32_t Samples() const { return samples_; }
+
+ private:
+  double budget_ms_;
+  uint32_t max_batch_;
+  double average_ms_ = 0.0;
+  uint32_t samples_ = 0;
+};
 
 // O que aconteceu no prewarm de uma execução; a linha sai uma vez na inicialização e de novo no
 // relatório de 10 s com os pipelines criados depois dela.

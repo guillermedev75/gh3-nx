@@ -136,6 +136,39 @@ int main(int argc, char** argv) {
     std::printf("ok\n");
     return 0;
   }
+  if (mode == "budget") {
+    // Sem nenhuma medida ainda, leva o lote do quadro; sem pendência, nada.
+    Budget idle(2.0, 2);
+    if (idle.Take(0) != 0) return Fail("empty");
+    if (idle.Take(100) != 2) return Fail("unknown average takes the batch");
+    // Custo médio de 2 ms com orçamento de 4 ms: duas entradas.
+    Budget wide(4.0, 8);
+    wide.Record(2.0);
+    if (wide.Take(100) != 2) return Fail("two fit");
+    if (wide.Take(1) != 1) return Fail("pending cap");
+    wide.Record(2.0);
+    if (wide.Take(100) != 2) return Fail("average stays 2");
+    // Barato: o teto por quadro manda.
+    Budget cheap(4.0, 3);
+    cheap.Record(0.5);
+    if (cheap.Take(100) != 3) return Fail("batch cap");
+    // Mais caro que o orçamento inteiro: ainda leva uma, para haver progresso.
+    Budget slow(4.0, 8);
+    slow.Record(10.0);
+    if (slow.Take(100) != 1) return Fail("over budget still one");
+    // Lote zero desliga.
+    Budget off(2.0, 0);
+    if (off.Take(10) != 0) return Fail("no batch");
+    // Média móvel de verdade.
+    Budget moving(10.0, 8);
+    moving.Record(2.0);
+    moving.Record(4.0);
+    if (moving.Samples() != 2) return Fail("samples");
+    if (moving.Average() < 2.999 || moving.Average() > 3.001) return Fail("mean");
+    if (moving.Take(100) != 3) return Fail("10/3 = 3 fits");
+    std::printf("ok\n");
+    return 0;
+  }
   return Fail("unknown mode");
 }
 """
@@ -228,3 +261,7 @@ def test_system_reports_pipelines_created_after_the_prewarm():
     assert "std::string Renderer::TakePrewarmReport()" in renderer
     header = (RAIZ / "src" / "native" / "native_renderer.h").read_text()
     assert "TakePrewarmReport" in header
+
+
+def test_incremental_budget_sizes_the_batch_per_frame(tmp_path):
+    assert run(build(tmp_path), "budget") == "ok"

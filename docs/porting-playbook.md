@@ -874,3 +874,75 @@ portátil a 460,8 MHz, cena a 0.65, sombra/bloom cortados. GPU por quadro (media
 - Dock (768 MHz): ~9–10 ms de GPU e 50–58 FPS na maior parte; picos de 15–22 ms nos trechos pesados.
 - Conserto junto: a APM registrava o modo de 460,8 MHz só para o modo atual; aberto no dock e tirado depois, o
   portátil ficava a 307,2 MHz. Agora sempre para `ApmPerformanceMode_Normal`.
+
+
+## 13. Prewarm incremental e a rajada de GPU (2026-10-23)
+
+**Boot.** Medido no Switch com o cache SPIR-V do commit `7ffa952` (logs `gh3_033`/`034`): a 1ª abertura
+guarda `spirv cache: 7 hits, 40 stored` e cresce até 140; o prewarm de 159 pipelines segura o boot
+**40 s** (10:29:19 → 10:29:59). Na 2ª abertura o cache acerta tudo (`spirv-opt: 0 shaders | spirv cache:
+178 hits, 0 stored`) e o prewarm cai para **1,9 s** (10:30:50 → 10:30:52). O cache funciona; o que dói é
+a primeira.
+
+**T55 — prewarm incremental.** `PrewarmPipelines` deixou de compilar tudo antes do guest: o manifesto vira
+uma fila (`prewarm_queue`), o thread do anel prepara (traduz) até `kPrewarmBatch`/`kPrewarmBudgetMs`
+entradas por quadro (orçamento em `prewarm::Budget`, média móvel do custo — o arquivo pode ser mais caro
+numa máquina lenta) e o **worker de pipelines** compila. No máximo `kPrewarmInFlight = 2` na fila do
+worker, para um pedido da gameplay nunca ficar atrás das 159. O jogo não espera nada: no Mac o primeiro
+`XELOG_GPU PRESENT` sai 0,21 s depois do renderer pronto (antes, o prewarm bloqueava 1,3–2,4 s); o prewarm
+termina 3,6–4,3 s depois, em paralelo. Logs: `pipeline prewarm: N queued, incremental over the first
+frames`, `... k/N incremental, X ms this frame` (a cada 10 quadros) e `... done in T ms over F frames`.
+`tools/check_prewarm_spread.py` (aceite) exige ≥2 fatias, `F ≥ 2` e **um PRESENT antes do "done"** —
+prova que o jogo apareceu antes de o prewarm acabar. `gh3_native_pipeline_prewarm_incremental=false`
+volta ao modo antigo (bloqueante, útil para A/B).
+
+**A rajada.** Nos logs da gameplay do Switch (`gh3_034`, 7 min): **511 quadros >50 ms (~4 %)**, em rajadas
+de 6–12 quadros seguidos a cada ~10–20 s, quase todos 50–57 ms. Nos quadros da rajada o **GPU vai a
+25–38 ms** e os draws de ~270 para ~379–575; texturas criadas, shaders e pipelines = 0.
+Não é calor nem clock: CPU 1020 / GPU 460,8 / RAM 1331 MHz fixos, SoC 37–39 °C (clkrst + ts no perfil), e
+o dock (768 MHz de GPU e CPU mais alta) vai a 52 FPS. `gh3_native_gpu_profile_slow_ms` (novo, padrão 10)
+loga a **quebra por passada de cada submissão** que estoura, com no máximo 1 linha a cada 250 ms e 12 por
+período de relatório — `gh3_native_gpu_profile_every=1` perfila todos os quadros (diagnóstico; o padrão
+segue 1 em 16). É a ferramenta para dizer qual passada come os 30 ms da rajada.
+
+**A radiografia (`gh3_035`, `profile_every=1`).** Cuidado com o número antigo de "GPU 5,3 ms": ele era
+`frame_fence_wait_ns`, espera do fence, não trabalho de GPU. Pelos timestamps das queries: **GPU por quadro
+no portátil p50 26,0 / p90 29,3 / máx 30,9 ms; no dock p50 18,0 / p90 28,0 / máx 31,2 ms**. Com o cap de
+2 vblanks (33,3 ms) o p90 quase encosta: é daí que vêm as "agarradas", não há um bug separado — é o p99 do
+GPU. Num quadro típico de 151 draws: `pass h720 c=t0p1280 d=t720p1280` **11–12 ms**; `pass h720 c=t0p1280
+d=-` (só cor, 14–19 draws) **4,4–6,2 ms**; `resolve p1280 1280x720` 1,3–2,2; `blit 1280x720 depth` 1,8–1,9;
+os blits de profundidade do shadow map 0,72 (1040x2048) e 0,39 (560x2048). Quadros pesados: passada
+principal 18,7 ms com 390 draws (544 no total). O cap esconde folga: portátil = 2 vblanks, dock = 1.
+
+
+## 14. Rastreamento de texturas (2026-10-23)
+
+Quando uma textura aparece errada (a plateia do GH3: ruído/confete com estrias verticais, teto com
+rabiscos), não havia como ver **o que** o draw ligou. `gh3_native_texture_trace` (UINT32) loga, por draw,
+uma linha `tex` por textura ligada:
+
+```
+tex f=250 d=1 ps slot=3 addr=0FEDA000 fmt=18 dim=1 bind=2D signed=0 1024x512x1 pitch=32 tiled=1
+    packed=1 mips=0..0 view=... image=... src=texture scissor=0,0 1280x720
+    pass=pass h720 c=t0p1280 d=t720p1280
+```
+
+- `addr` = `base_address << 12`; `fmt`/`dim`/`WxHxL`/`pitch`/`tiled`/`packed`/`mips` vêm da fetch
+  constant (`GetSubresourcesFromFetchConstant`), ou seja, do que o jogo **pediu**.
+- `bind`/`signed`: a mesma fetch constant vira duas bindings quando o shader a lê como 2D e como
+  3D/stacked, ou sem/com sinal — por isso a linha pode repetir com `signed=0` e `signed=1`.
+- `view`/`image`: `VkImageView`/`VkImage` que o renderer escolheu (0 = view nula). `src=resolve(WxH)`
+  marca endereço que é destino de resolve; `sized` marca a **cópia de tamanho exato**
+  (`ResolveDestination::Sized`), suspeita nº 1 de conteúdo deslocado/escalado.
+- `scissor` e `pass` dizem onde o draw caiu, para casar com o print.
+
+Janela: `gh3_native_texture_trace=N` loga os quadros `[N, N+2)`. Como não dá para prever o quadro em que
+a plateia aparece, use `gh3_native_texture_trace_every=600` (**2 quadros a cada 600**, ~20 s no portátil)
+e correlacione pelo timestamp do log com a hora do print. `gh3_native_texture_trace_addr=<endereço>`
+filtra um endereço só. Tudo desligado por padrão; o custo com a cvar em 0 é ler dois cvars por draw.
+
+Implementação: a captura do `VkImage` por binding fica em `TextureBindings::view_images[]` (preenchido no
+bloco de descritores, reaproveitado no `tb_hit`), e o log sai antes de `SubmitDraw` — onde a fetch
+constant do draw está disponível (não em `SubmitDraw`/`ExecuteDrawCommand`, que podem rodar na thread de
+gravação). A formatação pura fica em `src/native/native_texture_log.h`, com `tests/test_texture_log.py`.
+Ligar `gh3_native_rt_trace` junto ajuda a ver a ordem passada → resolve → cópia.

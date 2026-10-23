@@ -1089,6 +1089,10 @@ void* TextureCache::last_texture() const { return impl_->out_texture; }
 
 uint64_t TextureCache::last_valid_until() const { return impl_->out_valid_until; }
 
+VkImage TextureCache::TextureImage(void* texture) const {
+  return texture ? static_cast<const Texture*>(texture)->image : VK_NULL_HANDLE;
+}
+
 void TextureCache::Touch(void* texture, uint64_t submission) {
   auto* t = static_cast<Texture*>(texture);
   t->last_used_submission = submission;

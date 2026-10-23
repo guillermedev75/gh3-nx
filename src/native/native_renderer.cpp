@@ -60,6 +60,7 @@ extern "C" {
 
 #include "native_format_audit.h"
 #include "native_format_log.h"
+#include "native_texture_log.h"
 #include "native_geometry_shaders.h"
 #include "native_swap_log.h"
 #include "native_edram_samples.h"
@@ -153,6 +154,17 @@ REXCVAR_DEFINE_UINT32(gh3_native_rt_trace, 0, "GH3",
 REXCVAR_DEFINE_BOOL(gh3_native_format_log, false, "GH3",
                     "Uma linha \"format:\" por alvo criado com o VkFormat, o formato do guest, "
                     "16F, gamma, clear inicial, scene scale e alias (F0.4 do plano de 60 FPS)");
+REXCVAR_DEFINE_UINT32(gh3_native_texture_trace, 0, "GH3",
+                      "DEPURACAO: loga as texturas ligadas por draw nos quadros [N, N+2), com "
+                      "endereco do guest, formato, tamanho, pitch, tiling, mips, VkImage e se veio "
+                      "de um resolve (e de uma copia de tamanho exato); 0 = desligado");
+REXCVAR_DEFINE_UINT32(gh3_native_texture_trace_addr, 0, "GH3",
+                      "DEPURACAO: com gh3_native_texture_trace ligado, so loga as texturas "
+                      "deste endereco do guest; 0 = todas");
+REXCVAR_DEFINE_UINT32(gh3_native_texture_trace_every, 0, "GH3",
+                      "DEPURACAO: com o rastreamento de texturas ligado, loga 2 quadros a cada N "
+                      "quadros (ex.: 600 = a cada ~20 s no portatil), para pegar uma cena sem "
+                      "saber o numero do quadro; 0 = desligado");
 REXCVAR_DEFINE_BOOL(gh3_native_spirv_opt, false, "GH3",
                     "Passa cada shader traduzido pelo spvtools::Optimizer (RegisterPerformancePasses) "
                     "antes de criar o VkShaderModule, validando a entrada e a saida; se qualquer "
@@ -166,6 +178,16 @@ REXCVAR_DEFINE_BOOL(gh3_native_pipeline_prewarm, true, "GH3",
                     "Guarda as chaves dos pipelines usados (com o microcodigo dos shaders) ao lado "
                     "do cache do driver e recria esses pipelines na inicializacao, antes do jogo: "
                     "o primeiro uso na gameplay nao espera a compilacao (F2.5 do plano de 60 FPS)");
+REXCVAR_DEFINE_BOOL(gh3_native_pipeline_prewarm_incremental, true, "GH3",
+                    "Recria os pipelines do prewarm espalhados pelos primeiros quadros, com "
+                    "orcamento por quadro e o driver compilando no worker, em vez de segurar a "
+                    "inicializacao inteira (F2.5 do plano de 60 FPS; false volta ao modo antigo)");
+REXCVAR_DEFINE_UINT32(gh3_native_gpu_profile_every, 16, "GH3",
+                      "Perfila 1 em cada N quadros o tempo de GPU por passada (F3/F4); 1 perfila "
+                      "todos, para diagnostico de quadro lento");
+REXCVAR_DEFINE_DOUBLE(gh3_native_gpu_profile_slow_ms, 10.0, "GH3",
+                      "Com o perfil de GPU ligado, loga a quebra por passada de cada submissao "
+                      "acima deste tempo em ms (0 desliga)");
 REXCVAR_DEFINE_BOOL(gh3_native_resolve_swap, false, "GH3",
                     "Resolve de profundidade do alvo inteiro sem copiar (F3.3): o destino fica com a "
                     "imagem do alvo (amostrada como profundidade) e o alvo ganha uma imagem nova; o "
@@ -599,8 +621,36 @@ struct Renderer::Impl {
   std::unordered_map<uint64_t, ProfileTotal> profile_totals;
   uint32_t profiled_frames = 0;
   double profiled_ns = 0;
+  // Quadros lentos já logados no período do relatório (mesmo teto do slow frame do anel) e o
+  // instante do último, para uma rajada não virar uma parede de linhas.
+  uint32_t profile_slow_logged = 0;
+  std::chrono::steady_clock::time_point last_profile_slow_log;
   // Kinds, in the key's top 4 bits.
   enum : uint64_t { kProfileOther = 0, kProfilePass = 1, kProfileResolve = 2, kProfileCopy = 3 };
+  static std::string ProfileKeyText(uint64_t key) {
+    auto target = [](uint64_t bits) -> std::string {
+      if (bits == 0xFFFFFF) return "-";
+      return fmt::format("t{}p{}{}", (bits >> 12) & 0xFFF, (bits >> 1) & 0x7FF,
+                         (bits & 1) ? "f" : "");
+    };
+    switch (key >> 60) {
+      case kProfilePass:
+        return fmt::format("pass h{} c={} d={}", (key >> 48) & 0xFFF,
+                           target((key >> 24) & 0xFFFFFF), target(key & 0xFFFFFF));
+      case kProfileResolve:
+        return fmt::format("resolve{} p{} {}x{}", ((key >> 56) & 1) ? " depth" : "",
+                           (key >> 32) & 0x7FF, (key >> 16) & 0xFFFF, key & 0xFFFF);
+      case kProfileCopy: {
+        // Cópias entre alvos (alias do T15, descida/subida da cena do T16) e o EASU do FSR1.
+        static const char* kKinds[] = {"blit", "easu", "cas"};
+        const uint64_t kind = (key >> 56) & 0xF;
+        return fmt::format("{} {}x{}{}", kind < 3 ? kKinds[kind] : "copy", (key >> 16) & 0xFFFF,
+                           key & 0xFFFF, ((key >> 55) & 1) ? " depth" : "");
+      }
+      default:
+        return "other";
+    }
+  }
   static uint64_t ProfileTargetBits(const RenderTarget* rt) {
     if (!rt) return 0xFFFFFF;
     return (uint64_t(rt->key.base_tiles & 0xFFF) << 12) | (uint64_t(rt->key.pitch & 0x7FF) << 1) |
@@ -651,6 +701,8 @@ struct Renderer::Impl {
   bool in_pass = false;
   PassTargets pass;
   VkExtent2D pass_extent = {};
+  // Chave da passada corrente, para o rastreamento de texturas dizer em que passada o draw caiu.
+  uint64_t pass_profile_key = 0;
 
   // Pipelines.
   std::unordered_map<uint64_t, VkPipeline> pipelines;
@@ -861,6 +913,10 @@ struct Renderer::Impl {
     uint32_t view_count = 0;
     VkImageView views[24] = {};
     uint64_t view_ids[24] = {};
+    // Por view: fetch constant (bits 0-4), FetchOpDimension (5-6), sinal (7) e estagio (8), e a
+    // VkImage, so para o rastreamento de texturas (0 quando a view e' nula).
+    uint32_t view_slots[24] = {};
+    VkImage view_images[24] = {};
     uint32_t texture_count = 0;
     void* textures[24] = {};
   };
@@ -1575,9 +1631,27 @@ struct Renderer::Impl {
   std::atomic<bool> prewarm_writing{false};
   std::thread prewarm_writer;
   uint32_t pipelines_at_prewarm = 0;
+  // F2.5 incremental: as entradas do arquivo viram fila; a preparação (tradução) roda no thread do
+  // anel dentro de um orçamento por quadro e o driver compila no worker de pipelines, com no máximo
+  // kPrewarmInFlight na fila dele para um pedido da gameplay nunca ficar atrás dos 159.
+  static constexpr double kPrewarmBudgetMs = 2.0;
+  static constexpr uint32_t kPrewarmBatch = 2;
+  static constexpr uint32_t kPrewarmInFlight = 2;
+  std::vector<prewarm::Entry> prewarm_queue;
+  size_t prewarm_next = 0;
+  std::atomic<uint32_t> prewarm_in_flight{0};
+  // Hashes que foram para o worker pelo prewarm; protegido por pipeline_mutex.
+  std::unordered_set<uint64_t> prewarm_pending;
+  prewarm::Budget prewarm_budget{kPrewarmBudgetMs, kPrewarmBatch};
+  uint32_t prewarm_frames = 0;
+  uint32_t prewarm_log_tick = 0;
+  bool prewarm_done_logged = false;
+  std::chrono::steady_clock::time_point prewarm_started;
   void RecordPipeline(uint64_t hash, const PipelineKey& key,
                       VulkanShader::VulkanTranslation* vs, VulkanShader::VulkanTranslation* ps);
   bool PrewarmPipelines(uint32_t version);
+  bool PrewarmEntry(prewarm::Entry&& entry, bool async);
+  void DrainPrewarm();
   void SavePrewarmManifest();
 
   // --- Render targets ------------------------------------------------------------
@@ -1610,6 +1684,7 @@ struct Renderer::Impl {
       dfn().vkCmdEndRendering(cmd());
       in_pass = false;
     }
+    pass_profile_key = 0;
   }
   bool BeginPass(const PassTargets& targets, uint32_t wanted_height = UINT32_MAX);
 
@@ -2116,6 +2191,11 @@ void Renderer::Impl::ProfileCollect(uint32_t slot) {
   if (dfn().vkGetQueryPoolResults(vk, profile_pool, slot * kProfileQueries, uint32_t(ticks.size()),
                                   ticks.size() * sizeof(uint64_t), ticks.data(), sizeof(uint64_t),
                                   VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
+    // A quebra por passada desta submissão, para o caso de ela ser um dos quadros que estouram.
+    std::vector<std::pair<uint64_t, ProfileTotal>> frame_totals;
+    frame_totals.reserve(segments.size());
+    double frame_ns = 0;
+    uint64_t frame_draws = 0;
     for (size_t i = 0; i < segments.size(); ++i) {
       if (ticks[i + 1] < ticks[i]) continue;
       double ns = double(ticks[i + 1] - ticks[i]) * timestamp_period;
@@ -2124,6 +2204,35 @@ void Renderer::Impl::ProfileCollect(uint32_t slot) {
       ++total.count;
       total.draws += segments[i].draws;
       profiled_ns += ns;
+      auto it = std::find_if(frame_totals.begin(), frame_totals.end(),
+                             [&](const auto& e) { return e.first == segments[i].key; });
+      if (it == frame_totals.end()) {
+        frame_totals.push_back({segments[i].key, ProfileTotal{}});
+        it = std::prev(frame_totals.end());
+      }
+      it->second.ns += ns;
+      ++it->second.count;
+      it->second.draws += segments[i].draws;
+      frame_ns += ns;
+      frame_draws += segments[i].draws;
+    }
+    const double slow_ms = REXCVAR_GET(gh3_native_gpu_profile_slow_ms);
+    const auto now = std::chrono::steady_clock::now();
+    if (slow_ms > 0.0 && frame_ns > slow_ms * 1e6 && profile_slow_logged < 12 &&
+        (last_profile_slow_log.time_since_epoch().count() == 0 ||
+         now - last_profile_slow_log > std::chrono::milliseconds(250))) {
+      last_profile_slow_log = now;
+      ++profile_slow_logged;
+      std::sort(frame_totals.begin(), frame_totals.end(),
+                [](const auto& a, const auto& b) { return a.second.ns > b.second.ns; });
+      std::string line =
+          fmt::format("[native] GPU by pass, slow frame ({:.1f} ms, {} draws):", frame_ns / 1e6,
+                      frame_draws);
+      for (size_t i = 0; i < frame_totals.size() && i < 8; ++i) {
+        line += fmt::format(" | {}: {:.2f} ({} draws)", ProfileKeyText(frame_totals[i].first),
+                            frame_totals[i].second.ns / 1e6, frame_totals[i].second.draws);
+      }
+      REXLOG_INFO("{}", line);
     }
   }
   segments.clear();
@@ -2141,43 +2250,16 @@ void Renderer::Impl::ProfileReport() {
   std::string line = fmt::format("[native] GPU by pass, ms per frame (sampled, as the driver "
                                  "reports it): total {:.1f}",
                                  profiled_ns / 1e6 / frames);
-  auto target = [](uint64_t bits) -> std::string {
-    if (bits == 0xFFFFFF) return "-";
-    return fmt::format("t{}p{}{}", (bits >> 12) & 0xFFF, (bits >> 1) & 0x7FF,
-                       (bits & 1) ? "f" : "");
-  };
   for (size_t i = 0; i < sorted.size() && i < 14; ++i) {
-    uint64_t key = sorted[i].first;
     const ProfileTotal& t = sorted[i].second;
-    std::string what;
-    switch (key >> 60) {
-      case kProfilePass:
-        what = fmt::format("pass h{} c={} d={}", (key >> 48) & 0xFFF,
-                           target((key >> 24) & 0xFFFFFF), target(key & 0xFFFFFF));
-        break;
-      case kProfileResolve:
-        what = fmt::format("resolve{} p{} {}x{}", ((key >> 56) & 1) ? " depth" : "",
-                           (key >> 32) & 0x7FF, (key >> 16) & 0xFFFF, key & 0xFFFF);
-        break;
-      case kProfileCopy: {
-        // Cópias entre alvos (alias do T15, descida/subida da cena do T16) e o EASU do FSR1.
-        static const char* kKinds[] = {"blit", "easu", "cas"};
-        const uint64_t kind = (key >> 56) & 0xF;
-        what = fmt::format("{} {}x{}{}", kind < 3 ? kKinds[kind] : "copy", (key >> 16) & 0xFFFF, key & 0xFFFF,
-                           ((key >> 55) & 1) ? " depth" : "");
-        break;
-      }
-      default:
-        what = "other";
-        break;
-    }
-    line += fmt::format(" | {}: {:.2f} ({:.1f}x, {:.0f} draws)", what, t.ns / 1e6 / frames,
-                        double(t.count) / frames, double(t.draws) / frames);
+    line += fmt::format(" | {}: {:.2f} ({:.1f}x, {:.0f} draws)", ProfileKeyText(sorted[i].first),
+                        t.ns / 1e6 / frames, double(t.count) / frames, double(t.draws) / frames);
   }
   REXLOG_INFO("{}", line);
   profile_totals.clear();
   profiled_frames = 0;
   profiled_ns = 0;
+  profile_slow_logged = 0;
 }
 
 bool Renderer::Impl::CreateSwapResources() {
@@ -2728,6 +2810,13 @@ void Renderer::Impl::DrainCompletedPipelines() {
   for (auto& [hash, pipeline] : done) {
     pending_pipelines.erase(hash);
     pipelines.emplace(hash, pipeline);
+    // Prewarm incremental: a entrada saiu do worker e libera vaga para a próxima.
+    {
+      std::lock_guard<std::mutex> lock(pipeline_mutex);
+      if (prewarm_pending.erase(hash)) {
+        prewarm_in_flight.fetch_sub(1, std::memory_order_relaxed);
+      }
+    }
     if (pipeline) {
       ++stats().pipelines_created;
       last_pipeline_time = std::chrono::steady_clock::now();
@@ -3970,6 +4059,9 @@ bool Renderer::Impl::BeginPass(const PassTargets& targets, uint32_t wanted_heigh
   // pass — vkCmdResetQueryPool não pode ser gravado dentro de um.
   ProfileMark((kProfilePass << 60) | ((uint64_t(height) & 0xFFF) << 48) |
               (ProfileTargetBits(targets.color[0]) << 24) | ProfileTargetBits(targets.depth));
+  pass_profile_key = (kProfilePass << 60) | ((uint64_t(height) & 0xFFF) << 48) |
+                     (ProfileTargetBits(targets.color[0]) << 24) |
+                     ProfileTargetBits(targets.depth);
   dfn().vkCmdBeginRendering(cmd(), &info);
   in_pass = true;
   pass_extent = {width, height};
@@ -5024,6 +5116,16 @@ void Renderer::Impl::Draw(const uint32_t* immediate_indices, uint32_t immediate_
         if (tb.view_count < 24) {
           tb.views[tb.view_count] = info.imageView;
           tb.view_ids[tb.view_count] = textures.ViewId(info.imageView);
+          tb.view_slots[tb.view_count] = binding.fetch_constant |
+                                         (uint32_t(binding.dimension) << 5) |
+                                         (uint32_t(binding.is_signed) << 7) | (stage << 8);
+          VkImage traced_image = textures.TextureImage(slot_texture);
+          if (traced_image == VK_NULL_HANDLE && info.imageView != VK_NULL_HANDLE) {
+            const auto* destination = textures.FindResolveDestination(
+                r.GetTextureFetch(binding.fetch_constant).base_address << 12);
+            if (destination) traced_image = destination->image;
+          }
+          tb.view_images[tb.view_count] = traced_image;
         }
         ++tb.view_count;
         if (slot_texture) {
@@ -5284,6 +5386,62 @@ void Renderer::Impl::Draw(const uint32_t* immediate_indices, uint32_t immediate_
       bound_index_offset = index_offset;
       bound_index_type = index_type;
       bound_index_valid = true;
+    }
+  }
+  // Rastreamento de texturas (depuracao): uma linha por textura ligada ao draw. Le tb.view_slots,
+  // que o bloco de descritores preencheu na mesma ordem de tb.views (inclusive no reaproveitamento).
+  const uint32_t texture_trace = REXCVAR_GET(gh3_native_texture_trace);
+  const uint32_t texture_trace_every = REXCVAR_GET(gh3_native_texture_trace_every);
+  const bool trace_window =
+      texture_trace && frame >= texture_trace && frame < texture_trace + 2;
+  const bool trace_periodic = texture_trace_every && frame % texture_trace_every < 2;
+  if (trace_window || trace_periodic) {
+    const uint32_t trace_address = REXCVAR_GET(gh3_native_texture_trace_addr);
+    const uint32_t traced_views = std::min(tb.view_count, 24u);
+    for (uint32_t index = 0; index < traced_views; ++index) {
+      const uint32_t packed = tb.view_slots[index];
+      const uint32_t slot = packed & 31u;
+      const xenos::xe_gpu_texture_fetch_t fetch = r.GetTextureFetch(slot);
+      if (fetch.type != xenos::FetchConstantType::kTexture) continue;
+      uint32_t width_minus_1 = 0, height_minus_1 = 0, depth_minus_1 = 0, base_page = 0,
+               mip_page = 0, mip_min = 0, mip_max = 0;
+      rex::graphics::texture_util::GetSubresourcesFromFetchConstant(
+          fetch, &width_minus_1, &height_minus_1, &depth_minus_1, &base_page, &mip_page,
+          &mip_min, &mip_max);
+      const uint32_t address = base_page << 12;
+      if (!address || (trace_address && address != trace_address)) continue;
+      texture_log::Entry entry;
+      entry.frame = frame;
+      entry.draw = frame_draw_count;
+      entry.stage = (packed >> 8) & 1u;
+      entry.slot = slot;
+      entry.address = address;
+      entry.guest_format = uint32_t(fetch.format);
+      entry.dimension = uint32_t(fetch.dimension);
+      entry.bind_dimension = (packed >> 5) & 3u;
+      entry.signed_components = ((packed >> 7) & 1u) != 0;
+      entry.width = width_minus_1 + 1;
+      entry.height = height_minus_1 + 1;
+      entry.layers = depth_minus_1 + 1;
+      entry.pitch = fetch.pitch;
+      entry.mip_min = mip_min;
+      entry.mip_max = mip_max;
+      entry.tiled = fetch.tiled != 0;
+      entry.packed_mips = fetch.packed_mips != 0;
+      entry.view_id = tb.view_ids[index];
+      entry.image = uint64_t(tb.view_images[index]);
+      if (const auto* destination = textures.FindResolveDestination(address)) {
+        entry.resolve = true;
+        entry.resolve_width = destination->width;
+        entry.resolve_height = destination->height;
+        entry.sized = destination->width != entry.width || destination->height != entry.height;
+      }
+      entry.scissor_x = sr.offset.x;
+      entry.scissor_y = sr.offset.y;
+      entry.scissor_width = sr.extent.width;
+      entry.scissor_height = sr.extent.height;
+      entry.pass = ProfileKeyText(pass_profile_key);
+      REXLOG_INFO("[native] {}", texture_log::Format(entry));
     }
   }
   SubmitDraw(d);
@@ -6030,8 +6188,10 @@ void Renderer::Impl::Swap(rex::ui::Presenter* presenter, uint32_t frontbuffer, u
   frame_upload_wait_ns = frame_fence_wait_ns = frame_drain_wait_ns = frame_texture_ns = 0;
   frame_draw_count = 0;
   ++frame;
-  profile_frame = profile_pool && frame % 16 == 0;
+  const uint32_t profile_every = std::max(1u, REXCVAR_GET(gh3_native_gpu_profile_every));
+  profile_frame = profile_pool && frame % profile_every == 0;
   PollCompleted();
+  DrainPrewarm();
   ProfileReport();
   textures.BeginFrame(frame, completed_frame);
   FreeRetiredSetPools();
@@ -6095,23 +6255,15 @@ std::vector<uint8_t> ReadWholeFile(const std::filesystem::path& path) {
 }
 }  // namespace
 
-// F2.5: recria os pipelines do arquivo de prewarm. Roda na inicialização, antes do módulo do jogo
-// (InitializeShaderStorage vem antes de o thread do guest rodar), e no thread que chamou a
-// inicialização — os threads de tradução e de compilação estão parados, então a tradução aqui
-// continua sendo feita por um só thread, como o tradutor exige.
-bool Renderer::Impl::PrewarmPipelines(uint32_t version) {
-  prewarm_stats = prewarm::Stats();
-  prewarm_stats.version = version;
-  pipelines_at_prewarm = uint32_t(stats().pipelines_created);
-  if (!REXCVAR_GET(gh3_native_pipeline_prewarm)) {
+// F2.5: recria um pipeline do arquivo de prewarm. A tradução roda no thread do anel (o tradutor é
+// dele, e um só thread traduz, como ele exige); com `async`, a compilação do driver vai para o
+// worker de pipelines e o quadro não espera. Sem `async` (worker desligado, ou o modo antigo), o
+// pipeline é criado aqui mesmo.
+bool Renderer::Impl::PrewarmEntry(prewarm::Entry&& entry, bool async) {
+  if (entry.key.size() != sizeof(PipelineKey) || entry.vs_ucode.empty()) {
+    ++prewarm_stats.skipped;
     return false;
   }
-  std::vector<uint8_t> data = ReadWholeFile(prewarm_path);
-  prewarm::Manifest manifest;
-  if (data.empty() || !prewarm::Parse(data.data(), data.size(), version, &manifest)) {
-    return false;
-  }
-  prewarm_stats.loaded = uint32_t(manifest.entries.size());
   auto find_or_create = [this](xenos::ShaderType type, const std::vector<uint32_t>& ucode,
                                uint64_t hash) -> VulkanShader* {
     auto it = shaders.find(hash);
@@ -6133,97 +6285,179 @@ bool Renderer::Impl::PrewarmPipelines(uint32_t version) {
     translation_state[translation] = 2;
     return ShaderModuleFor(translation) != VK_NULL_HANDLE;
   };
-  std::vector<prewarm::Entry> kept;
-  kept.reserve(manifest.entries.size());
-  for (const prewarm::Entry& entry : manifest.entries) {
-    if (entry.key.size() != sizeof(PipelineKey) || entry.vs_ucode.empty()) {
-      ++prewarm_stats.skipped;
-      continue;
+  auto keep = [this](prewarm::Entry&& kept) {
+    // O que foi usado continua no arquivo (o prewarm desta execução não pode encolher o cache).
+    std::lock_guard<std::mutex> lock(prewarm_mutex);
+    if (prewarm_entries.size() >= prewarm::kMaxEntries) return;
+    prewarm_entries.emplace(kept.hash, std::move(kept));
+    prewarm_entry_count.store(prewarm_entries.size(), std::memory_order_relaxed);
+  };
+  PipelineKey key;
+  std::memcpy(&key, entry.key.data(), sizeof(key));
+  // O hash da chave é o da identidade do shader que o jogo carrega (sobre o microcódigo no byte
+  // order do guest), então o microcódigo gravado aqui — já no byte order do host, como o Shader do
+  // SDK guarda — não confere por XXH3; a integridade do arquivo é o hash do corpo (Parse). O
+  // Shader criado abaixo usa key.vs_hash/ps_hash como chave, que é a mesma que LoadShader usa.
+  VulkanShader* vs = find_or_create(xenos::ShaderType::kVertex, entry.vs_ucode, key.vs_hash);
+  VulkanShader* ps =
+      entry.ps_ucode.empty()
+          ? nullptr
+          : find_or_create(xenos::ShaderType::kPixel, entry.ps_ucode, key.ps_hash);
+  if (!vs || (ps == nullptr && !entry.ps_ucode.empty())) {
+    ++prewarm_stats.failed;
+    return false;
+  }
+  auto* vs_translation = static_cast<VulkanShader::VulkanTranslation*>(
+      vs->GetOrCreateTranslation(key.vs_modification));
+  auto* ps_translation =
+      ps ? static_cast<VulkanShader::VulkanTranslation*>(ps->GetOrCreateTranslation(key.ps_modification))
+         : nullptr;
+  if (!translate(vs_translation) || (ps_translation && !translate(ps_translation))) {
+    ++prewarm_stats.failed;
+    return false;
+  }
+  VkShaderModule geometry_module = VK_NULL_HANDLE;
+  if (key.geometry_shader) {
+    GeometryShaderKey geometry_key;
+    geometry_key.key = key.geometry_shader;
+    auto it = geometry_shaders.find(geometry_key.key);
+    if (it == geometry_shaders.end()) {
+      it = geometry_shaders.emplace(geometry_key.key, CreateGeometryShader(device, geometry_key))
+               .first;
     }
-    PipelineKey key;
-    std::memcpy(&key, entry.key.data(), sizeof(key));
-    // O hash da chave é o da identidade do shader que o jogo carrega (sobre o microcódigo no byte
-    // order do guest), então o microcódigo gravado aqui — já no byte order do host, como o Shader do
-    // SDK guarda — não confere por XXH3; a integridade do arquivo é o hash do corpo (Parse). O
-    // Shader criado abaixo usa key.vs_hash/ps_hash como chave, que é a mesma que LoadShader usa.
-    VulkanShader* vs =
-        find_or_create(xenos::ShaderType::kVertex, entry.vs_ucode, key.vs_hash);
-    VulkanShader* ps =
-        entry.ps_ucode.empty()
-            ? nullptr
-            : find_or_create(xenos::ShaderType::kPixel, entry.ps_ucode, key.ps_hash);
-    if (!vs || (ps == nullptr && !entry.ps_ucode.empty())) {
+    geometry_module = it->second;
+    if (!geometry_module) {
       ++prewarm_stats.failed;
-      continue;
+      return false;
     }
-    auto* vs_translation = static_cast<VulkanShader::VulkanTranslation*>(
-        vs->GetOrCreateTranslation(key.vs_modification));
-    auto* ps_translation =
-        ps ? static_cast<VulkanShader::VulkanTranslation*>(
-                 ps->GetOrCreateTranslation(key.ps_modification))
-           : nullptr;
-    if (!translate(vs_translation) || (ps_translation && !translate(ps_translation))) {
-      ++prewarm_stats.failed;
-      continue;
+  }
+  const PipelineLayout* pipeline_layout =
+      GetPipelineLayout(uint32_t(key.layout >> 48), uint32_t(key.layout >> 32) & 0xFFu,
+                        uint32_t(key.layout >> 16) & 0xFFu, uint32_t(key.layout) & 0xFFu);
+  if (!pipeline_layout) {
+    ++prewarm_stats.failed;
+    return false;
+  }
+  if (pipelines.count(entry.hash)) {
+    ++prewarm_stats.skipped;
+    keep(std::move(entry));
+    return true;
+  }
+  PipelineJob job;
+  job.hash = entry.hash;
+  job.key = key;
+  job.vertex = ShaderModuleFor(vs_translation);
+  job.pixel = ps_translation ? ShaderModuleFor(ps_translation) : VK_NULL_HANDLE;
+  job.geometry = geometry_module;
+  job.layout = pipeline_layout->layout;
+  if (async && REXCVAR_GET(gh3_native_async_pipelines) && pipeline_thread.joinable()) {
+    // O driver compila no worker enquanto o jogo já corre; no máximo kPrewarmInFlight na fila dele.
+    pending_pipelines.insert(entry.hash);
+    {
+      std::lock_guard<std::mutex> lock(pipeline_mutex);
+      pipeline_jobs.push_back(job);
+      prewarm_pending.insert(entry.hash);
     }
-    VkShaderModule geometry_module = VK_NULL_HANDLE;
-    if (key.geometry_shader) {
-      GeometryShaderKey geometry_key;
-      geometry_key.key = key.geometry_shader;
-      auto it = geometry_shaders.find(geometry_key.key);
-      if (it == geometry_shaders.end()) {
-        it = geometry_shaders.emplace(geometry_key.key, CreateGeometryShader(device, geometry_key))
-                 .first;
-      }
-      geometry_module = it->second;
-      if (!geometry_module) {
-        ++prewarm_stats.failed;
-        continue;
-      }
-    }
-    const PipelineLayout* pipeline_layout =
-        GetPipelineLayout(uint32_t(key.layout >> 48), uint32_t(key.layout >> 32) & 0xFFu,
-                          uint32_t(key.layout >> 16) & 0xFFu, uint32_t(key.layout) & 0xFFu);
-    if (!pipeline_layout) {
-      ++prewarm_stats.failed;
-      continue;
-    }
-    if (pipelines.count(entry.hash)) {
-      ++prewarm_stats.skipped;
-      kept.push_back(entry);
-      continue;
-    }
-    PipelineJob job;
-    job.hash = entry.hash;
-    job.key = key;
-    job.vertex = ShaderModuleFor(vs_translation);
-    job.pixel = ps_translation ? ShaderModuleFor(ps_translation) : VK_NULL_HANDLE;
-    job.geometry = geometry_module;
-    job.layout = pipeline_layout->layout;
+    prewarm_in_flight.fetch_add(1, std::memory_order_relaxed);
+    pipeline_cv.notify_one();
+    ++prewarm_stats.created;
+  } else {
     VkPipeline pipeline = CreatePipeline(job);
     if (!pipeline) {
       ++prewarm_stats.failed;
-      continue;
+      return false;
     }
     pipelines.emplace(entry.hash, pipeline);
     ++stats().pipelines_created;
     last_pipeline_time = std::chrono::steady_clock::now();
     ++prewarm_stats.created;
-    kept.push_back(entry);
   }
-  // O que foi usado continua no arquivo (o prewarm desta execução não pode encolher o cache).
+  keep(std::move(entry));
+  return true;
+}
+
+bool Renderer::Impl::PrewarmPipelines(uint32_t version) {
+  prewarm_stats = prewarm::Stats();
+  prewarm_stats.version = version;
+  pipelines_at_prewarm = uint32_t(stats().pipelines_created);
+  prewarm_queue.clear();
+  prewarm_next = 0;
+  prewarm_in_flight.store(0, std::memory_order_relaxed);
   {
-    std::lock_guard<std::mutex> lock(prewarm_mutex);
-    for (prewarm::Entry& entry : kept) {
-      if (prewarm_entries.size() >= prewarm::kMaxEntries) break;
-      prewarm_entries.emplace(entry.hash, std::move(entry));
-    }
-    prewarm_entry_count.store(prewarm_entries.size(), std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lock(pipeline_mutex);
+    prewarm_pending.clear();
+  }
+  prewarm_budget = prewarm::Budget(kPrewarmBudgetMs, kPrewarmBatch);
+  prewarm_frames = 0;
+  prewarm_log_tick = 0;
+  prewarm_done_logged = false;
+  if (!REXCVAR_GET(gh3_native_pipeline_prewarm)) {
+    return false;
+  }
+  std::vector<uint8_t> data = ReadWholeFile(prewarm_path);
+  prewarm::Manifest manifest;
+  if (data.empty() || !prewarm::Parse(data.data(), data.size(), version, &manifest)) {
+    return false;
+  }
+  prewarm_stats.loaded = uint32_t(manifest.entries.size());
+  prewarm_started = std::chrono::steady_clock::now();
+  const bool incremental = REXCVAR_GET(gh3_native_pipeline_prewarm_incremental) &&
+                           REXCVAR_GET(gh3_native_async_pipelines) && pipeline_thread.joinable();
+  if (incremental) {
+    prewarm_queue = std::move(manifest.entries);
+    REXLOG_INFO("[native] pipeline prewarm: {} queued, incremental over the first frames",
+                prewarm_queue.size());
+    return true;
+  }
+  for (prewarm::Entry& entry : manifest.entries) {
+    PrewarmEntry(std::move(entry), false);
   }
   // A contagem de referência é a de pipelines prontos quando o jogo começa: o que passar disso foi
   // compilado durante a gameplay (o número que o F2.5 quer ver zerado).
   pipelines_at_prewarm = uint32_t(stats().pipelines_created);
   return true;
+}
+
+void Renderer::Impl::DrainPrewarm() {
+  if (!prewarm_stats.version || prewarm_done_logged) return;
+  // O worker devolve os prontos por aqui; a contagem em voo só cai quando chegam.
+  DrainCompletedPipelines();
+  const size_t total = prewarm_queue.size();
+  const uint32_t in_flight = prewarm_in_flight.load(std::memory_order_relaxed);
+  if (prewarm_next >= total) {
+    if (in_flight) return;
+    const double elapsed_ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - prewarm_started)
+            .count();
+    REXLOG_INFO(
+        "[native] pipeline prewarm: done in {:.0f} ms over {} frames ({} submitted, {} failed, {} "
+        "skipped)",
+        elapsed_ms, prewarm_frames, prewarm_stats.created, prewarm_stats.failed,
+        prewarm_stats.skipped);
+    prewarm_done_logged = true;
+    pipelines_at_prewarm = uint32_t(stats().pipelines_created);
+    prewarm_queue.clear();
+    prewarm_queue.shrink_to_fit();
+    return;
+  }
+  if (in_flight >= kPrewarmInFlight) return;
+  const uint32_t room = kPrewarmInFlight - in_flight;
+  const uint32_t take = prewarm_budget.Take(uint32_t(std::min<size_t>(total - prewarm_next, room)));
+  if (!take) return;
+  const auto start = std::chrono::steady_clock::now();
+  for (uint32_t i = 0; i < take && prewarm_next < total; ++i) {
+    PrewarmEntry(std::move(prewarm_queue[prewarm_next]), true);
+    ++prewarm_next;
+  }
+  const double ms =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+  prewarm_budget.Record(ms);
+  ++prewarm_frames;
+  if (++prewarm_log_tick >= 10 || prewarm_next >= total) {
+    prewarm_log_tick = 0;
+    REXLOG_INFO("[native] pipeline prewarm: {}/{} incremental, {:.1f} ms this frame", prewarm_next,
+                total, ms);
+  }
 }
 
 void Renderer::Impl::SavePrewarmManifest() {
@@ -6325,7 +6559,9 @@ void Renderer::InitializeDriverCache(const std::filesystem::path& cache_root,
   const prewarm::Stats& stats = im.prewarm_stats;
   if (!REXCVAR_GET(gh3_native_pipeline_prewarm)) {
     REXLOG_INFO("[native] pipeline prewarm: off (gh3_native_pipeline_prewarm=false)");
-  } else {
+  } else if (!REXCVAR_GET(gh3_native_pipeline_prewarm_incremental)) {
+    // No modo incremental a fila já foi logada por PrewarmPipelines; esta linha (com o "of N from
+    // the cache") só faz sentido quando o prewarm inteiro rodou aqui.
     REXLOG_INFO("[native] {}", stats.Line());
   }
 }

@@ -138,6 +138,9 @@ class TextureCache {
   // answer stays the same while the fetch constant does.
   void* last_texture() const;
   uint64_t last_valid_until() const;
+  // The VkImage behind a texture returned by last_texture(), for debug tracing. Null for a
+  // resolve destination or the empty texture (the caller looks those up by address).
+  VkImage TextureImage(void* texture) const;
   // Marks a texture as used by this submission and frame, as GetView does:
   // what frees textures and rewrites them in place goes by it.
   void Touch(void* texture, uint64_t submission);
