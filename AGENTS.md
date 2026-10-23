@@ -59,7 +59,7 @@ GH3_BUILD_DIR=out/build/mac-arm64-p8sdk ./run-gh3.command [--gh3_renderer=native
 ```bash
 docker build --platform linux/amd64 -t gh3-switch-clang docker/switch
 tools/build_mesa.sh                    # NVK → out/driver-sdk
-docker run --rm --platform linux/amd64 -v "$PWD":/project -w /project gh3-switch-clang sh -c \
+docker run --rm --platform linux/amd64 -e GH3_GIT_SHA=$(git rev-parse --short=7 HEAD) -v "$PWD":/project -w /project gh3-switch-clang sh -c \
   'cmake -S . -B build/switch -G Ninja -DCMAKE_BUILD_TYPE=Release -DGH3_SWITCH=ON \
      -DCMAKE_TOOLCHAIN_FILE=/project/cmake/switch-rexglue-gcc.cmake -DREXSDK_DIR=/project/sdk \
      -DREXGLUE_SWITCH_NVK_SDK=/project/out/driver-sdk && cmake --build build/switch -j 6'

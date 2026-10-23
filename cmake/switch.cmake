@@ -126,6 +126,21 @@ set(GH3_NRO_ICON "${CMAKE_SOURCE_DIR}/switch/icon.jpg")
 if(EXISTS "${CMAKE_SOURCE_DIR}/out/switch/icon.jpg")
     set(GH3_NRO_ICON "${CMAKE_SOURCE_DIR}/out/switch/icon.jpg")
 endif()
-set(GH3_NRO_VERSION "0.1.0" CACHE STRING "Versão mostrada pelo Homebrew Menu")
+# Versão mostrada pelo Homebrew Menu: <marco>-<commit>, para cada build no console dizer de qual código veio.
+# Subir GH3_VERSION a cada marco. O commit vem de GH3_GIT_SHA (o Docker não enxerga o git da worktree: passar
+# `-e GH3_GIT_SHA=$(git rev-parse --short=7 HEAD)` no docker run) ou, fora dele, do próprio git.
+set(GH3_VERSION "0.5.0")
+unset(GH3_NRO_VERSION CACHE)
+set(GH3_GIT_SHA "$ENV{GH3_GIT_SHA}")
+if(NOT GH3_GIT_SHA)
+    execute_process(COMMAND git -C "${CMAKE_SOURCE_DIR}" rev-parse --short=7 HEAD
+        OUTPUT_VARIABLE GH3_GIT_SHA OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+endif()
+if(GH3_GIT_SHA)
+    set(GH3_NRO_VERSION "${GH3_VERSION}-${GH3_GIT_SHA}")
+else()
+    set(GH3_NRO_VERSION "${GH3_VERSION}")
+endif()
+message(STATUS "gh3: versão do NRO ${GH3_NRO_VERSION}")
 rexglue_switch_add_nro(gh3 NAME "${GH3_NRO_NAME}" AUTHOR "Guillerme Manhaes"
     VERSION "${GH3_NRO_VERSION}" ICON "${GH3_NRO_ICON}")
